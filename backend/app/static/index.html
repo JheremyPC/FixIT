@@ -1,0 +1,6 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FixIT · Soporte técnico</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<div id="login" class="auth"><section><div class="brand">Fix<span>IT</span></div><p>Sistema Integral de Gestión de Soporte Técnico</p><form id="login-form"><label>Correo<input id="email" type="email" autocomplete="username" required></label>
+<label>Contraseña<input id="password" type="password" autocomplete="current-password" required></label>
+<button>Iniciar sesión</button></form><p><button class="ghost" id="show-register">Crear cuenta de solicitante</button></p></section></div>
+<div id="app" hidden><aside><div class="brand">Fix<span>IT</span></div><div id="identity"></div><nav id="nav"></nav><button class="ghost" id="logout">Cerrar sesión</button></aside><main><header><div><h1 id="page-title">Panel</h1><p id="page-note">Vista de operación</p></div><button id="notify" class="icon">🔔 <b id="unread"></b></button></header><div id="flash"></div><section id="content"></section></main></div>
+<dialog id="modal"><button class="close" onclick="modal.close()">×</button><div id="modal-content"></div></dialog><script src="/static/app.js"></script></body></html>
