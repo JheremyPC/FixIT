@@ -10,3 +10,5 @@ ENV PYTHONPATH=/srv/fixit/backend
 WORKDIR /srv/fixit/backend
 RUN mkdir -p /srv/fixit/backend/uploads
 EXPOSE 8000
+
+CMD sh -c "alembic -c /srv/fixit/backend/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
