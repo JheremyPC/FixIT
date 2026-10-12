@@ -102,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     except importer.SyntheticDataExists as exc:
         print(f"AVISO: {exc}", file=sys.stderr)
         return 3
+    except importer.AutomationGuardMissing as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 4
     if getattr(args, "csv", None):
         write_csv(ds, args.csv)
         result["csv"] = os.path.abspath(args.csv)

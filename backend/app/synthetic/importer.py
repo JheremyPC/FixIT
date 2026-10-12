@@ -8,6 +8,9 @@ Safety rules (see docs/datos-sinteticos.md):
 * Synthetic rows are identified by the ``SYN-`` ticket prefix and the
   ``@sintetico.fixit.example`` e-mail domain. Purging only touches those rows; real tickets
   are never deleted.
+* Where Supabase's automation triggers exist, demo rows must not enqueue automation events
+  (notifications/audit entries for fake activity): the import requires migration
+  0002_skip_synthetic_automation and turns its flag on only inside the import transaction.
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import Engine, delete, func, insert, select, update
+from sqlalchemy import Engine, delete, func, insert, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -30,6 +33,8 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "db", "postgres", "fixit-db", "h
 REMOTE_MARKERS = ("supabase.", "render.com", "amazonaws.com", "azure.com", "neon.tech", "railway.app", "elephantsql",
                   "googleapis.com", "aivencloud.com", "digitalocean")
 BATCH = 1000
+AUTOMATION_FUNCTION = "fixit_enqueue_automation_event"
+AUTOMATION_SKIP_SETTING = "fixit.synthetic_import"  # see migrations/versions/0002_skip_synthetic_automation.py
 
 
 class UnsafeTargetError(RuntimeError):
@@ -37,6 +42,10 @@ class UnsafeTargetError(RuntimeError):
 
 
 class SyntheticDataExists(RuntimeError):
+    pass
+
+
+class AutomationGuardMissing(RuntimeError):
     pass
 
 
@@ -101,6 +110,23 @@ def _ensure_base(engine: Engine) -> None:
         seed(db)
 
 
+def _automation_guard_required(engine: Engine) -> bool:
+    """True when the automation trigger exists and honours the skip flag; raises if it exists without it."""
+    if engine.dialect.name != "postgresql":
+        return False
+    with engine.connect() as conn:
+        body = conn.scalar(text("SELECT prosrc FROM pg_proc WHERE oid = to_regprocedure(:sig)"),
+                           {"sig": f"{AUTOMATION_FUNCTION}()"})
+    if body is None:
+        return False  # no automation triggers (local databases created by Alembic)
+    if AUTOMATION_SKIP_SETTING not in body:
+        raise AutomationGuardMissing(
+            f"La base tiene {AUTOMATION_FUNCTION}() sin la protección para datos sintéticos: la importación generaría "
+            "miles de eventos de automatización. Aplique antes la migración 0002_skip_synthetic_automation "
+            "(alembic upgrade head). No se escribió nada.")
+    return True
+
+
 def _get_or_create(db: Session, model, name: str, **extra):
     item = db.scalar(select(model).where(model.name == name))
     if item:
@@ -160,11 +186,15 @@ def _purge(db: Session) -> dict:
 
 
 def import_dataset(engine: Engine, ds: SyntheticDataset, replace: bool = False) -> dict:
+    skip_automation = _automation_guard_required(engine)  # checked before any write
     _ensure_base(engine)
     from app.security.auth import hash_password
 
     password_hash = hash_password(os.getenv("FIXIT_SYNTHETIC_PASSWORD", "Demo!2026"))
     with Session(engine) as db, db.begin():
+        if skip_automation:
+            # is_local=true: the flag ends with this transaction; the trigger still requires a SYN- ticket.
+            db.execute(text("SELECT set_config(:key, 'on', true)"), {"key": AUTOMATION_SKIP_SETTING})
         existing = db.scalar(select(func.count()).select_from(Ticket).where(synthetic_ticket_filter())) or 0
         purged = None
         if existing:

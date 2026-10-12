@@ -53,7 +53,7 @@ $env:PYTHONPATH = "."
 
 ## Producción (Render + Supabase)
 
-- Esta versión **no cambia el esquema** de la base de datos: no hay migraciones nuevas. Los registros sintéticos se identifican por el prefijo `SYN-` y el dominio `@sintetico.fixit.example`; nunca se cargan automáticamente en Supabase.
+- No hay cambios de tablas. La migración `0002_skip_synthetic_automation` solo modifica la función de Supabase `fixit_enqueue_automation_event()` para que una importación de demostración no genere eventos de automatización; en bases sin esa función no hace nada. Los registros sintéticos se identifican por el prefijo `SYN-` y el dominio `@sintetico.fixit.example`; nunca se cargan automáticamente en Supabase (procedimiento manual en `docs/datos-sinteticos.md`).
 - Variables nuevas opcionales en Render: `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `ML_MODEL_DIR` (ver `.env.example`).
 - El disco de Render es efímero: los modelos entrenados se pierden al reiniciar. Reentrene desde el Centro de IA después de cada despliegue o configure un disco persistente y apunte `ML_MODEL_DIR` a él.
 - El worker de automatización solo se inicia con PostgreSQL y si existe la tabla `automation_events` (Supabase); en bases locales se desactiva con un aviso.
