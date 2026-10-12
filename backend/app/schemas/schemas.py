@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -96,3 +97,25 @@ class TokenOut(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: dict
+
+
+class TrainIn(BaseModel):
+    include_synthetic: bool = True
+
+
+class PredictIn(BaseModel):
+    title: str = Field(min_length=5, max_length=180)
+    description: str = Field(min_length=10, max_length=8000)
+    area_id: str = Field(min_length=1, max_length=36)
+    category_id: str = Field(min_length=1, max_length=36)
+    priority_id: str | None = Field(default=None, max_length=36)
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=6000)
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=2, max_length=2000)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=20)

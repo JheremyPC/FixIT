@@ -1,47 +1,74 @@
 # FixIT
 
-Sistema Integral de Gestión de Soporte Técnico: FastAPI, PostgreSQL y una interfaz web sin dependencias de frontend.
+Sistema Integral de Gestión de Soporte Técnico: FastAPI, PostgreSQL y una interfaz web sin dependencias de frontend, con un Centro de Inteligencia Artificial (Machine Learning + asistente LLM).
 
-## Inicio rápido con Docker
+- **Roles:** ADMIN, JEFE_TI, TECNICO y USUARIO, cada uno con su propio panel.
+- **Operación:** tickets, asignación automática ponderada, comentarios, adjuntos, calificaciones, notificaciones, auditoría y reportes (CSV, Excel, PDF).
+- **IA (solo ADMIN y JEFE_TI):** tiempo de resolución estimado, riesgo de incumplir SLA con explicación de factores, recomendación de técnicos, proyección de demanda, patrones por periodo/categoría/prioridad/técnico, simulador y métricas de evaluación. Ver [docs/inteligencia-artificial.md](docs/inteligencia-artificial.md).
+- **Asistente LLM (todos los roles):** chat, resumen de tickets, sugerencias de diagnóstico y búsqueda contextual en el historial, respetando los permisos de cada usuario.
+- **Datos sintéticos:** generador reproducible de 5.000 tickets, solo para bases locales. Ver [docs/datos-sinteticos.md](docs/datos-sinteticos.md).
 
-1. Copie `.env.example` a `.env` y reemplace `POSTGRES_PASSWORD` y `JWT_SECRET_KEY` por valores seguros.
-2. Ejecute `docker compose up --build`.
-3. Abra [http://localhost:8000](http://localhost:8000).
-4. Inicie como `admin@fixit.org` con contraseña `FixIT!2026`, cree los demás usuarios y no use estas credenciales de inicio fuera de un entorno local.
+## Inicio rápido con Docker (desarrollo local)
 
-El servicio espera a PostgreSQL, aplica la migración Alembic `0001_initial`, crea los catálogos base y la cuenta inicial solo si no existen.
+1. Copie `.env.example` a `.env` y defina `POSTGRES_PASSWORD`, `JWT_SECRET_KEY` y `FIXIT_ADMIN_PASSWORD`.
+2. `docker compose up --build`
+3. Abra <http://localhost:8000> e inicie sesión como `admin@fixit.org` con la contraseña de `FIXIT_ADMIN_PASSWORD`.
+
+En Docker Compose la API usa **siempre el servicio local `db`**, aunque `.env` contenga la URL de producción (Supabase). Para apuntar a otra base defina explícitamente `COMPOSE_DATABASE_URL`.
+
+### Datos de demostración y entrenamiento (3 comandos)
+
+```bash
+docker compose up -d --build
+docker compose exec api python -m app.synthetic import --csv /srv/fixit/outputs/fixit_synthetic_tickets.csv
+# Entrar como admin → Centro de IA → «Entrenar ahora»
+```
+
+El importador rechaza cualquier base remota (Supabase, Render, etc.). Las cuentas de demostración son `<nombre>@sintetico.fixit.example` con la contraseña `Demo!2026` (configurable con `FIXIT_SYNTHETIC_PASSWORD`).
 
 ## Ejecución local sin Docker
 
-Requiere Python 3.12 y PostgreSQL. Cree un entorno virtual, instale `pip install -r requirements.txt`, configure `DATABASE_URL` en `.env`, y desde `backend` ejecute:
+Requiere Python 3.12 y PostgreSQL (o SQLite para pruebas rápidas). Desde la raíz:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\pip install -r requirements.txt
+cd backend
+$env:DATABASE_URL = "postgresql+psycopg://fixit:clave@localhost:5432/fixit"   # o sqlite:///./fixit.db
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Para desarrollo muy rápido, si no existe `DATABASE_URL`, la app crea `backend/fixit.db` SQLite. PostgreSQL es la configuración objetivo para producción.
+La configuración se lee de variables de entorno y del archivo `.env` de la raíz; las variables de entorno tienen prioridad.
 
 ## Pruebas
 
-Desde `backend`:
-
 ```powershell
+cd backend
 $env:PYTHONPATH = "."
-pytest -q
+..\.venv\Scripts\python -m pytest -q
 ```
+
+`tests/conftest.py` crea una base SQLite temporal y una carpeta de modelos temporal; las pruebas nunca usan la base configurada en `.env` ni un proveedor LLM real.
+
+## Producción (Render + Supabase)
+
+- Esta versión **no cambia el esquema** de la base de datos: no hay migraciones nuevas. Los registros sintéticos se identifican por el prefijo `SYN-` y el dominio `@sintetico.fixit.example`; nunca se cargan automáticamente en Supabase.
+- Variables nuevas opcionales en Render: `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `ML_MODEL_DIR` (ver `.env.example`).
+- El disco de Render es efímero: los modelos entrenados se pierden al reiniciar. Reentrene desde el Centro de IA después de cada despliegue o configure un disco persistente y apunte `ML_MODEL_DIR` a él.
+- El worker de automatización solo se inicia con PostgreSQL y si existe la tabla `automation_events` (Supabase); en bases locales se desactiva con un aviso.
 
 ## Flujo operativo
 
-1. FixIT carga áreas, prioridad y una categoría general al arrancar. El administrador puede añadir especialidades y categorías; luego usuarios técnicos y sus perfiles/especialidades.
-2. El usuario crea un ticket. FixIT aplica el SLA de prioridad y ejecuta la asignación ponderada.
-3. El técnico acepta, registra diagnóstico/solución y resuelve.
-4. El usuario confirma/cierra o reabre; después califica una única vez.
-5. Historial, notificaciones y auditoría se generan en cada acción relevante. Jefe de TI y administrador supervisan dashboard, auditoría y CSV.
+1. FixIT carga roles, áreas, prioridades y estados al arrancar. El administrador crea usuarios, técnicos y catálogos.
+2. El usuario crea un ticket; FixIT aplica el SLA de la prioridad y ejecuta la asignación ponderada.
+3. El técnico acepta, puede poner en espera, escalar o registrar la solución.
+4. El solicitante confirma y cierra o reabre; después califica una única vez.
+5. Historial, notificaciones y auditoría se generan en cada acción. Jefe de TI y administrador supervisan paneles, IA, auditoría y reportes.
 
-## Seguridad y límites de esta versión
+## Seguridad
 
-- Contraseñas con bcrypt, JWT de acceso/refresh, RBAC y verificación de propiedad por ticket.
-- Validación Pydantic, errores sin detalles internos y adjuntos protegidos.
-- Configure TLS, secreto de JWT, CORS institucional, rotación/invalidación de refresh tokens y almacenamiento externo de adjuntos antes de exponerlo a Internet.
-- No se implementaron IA, RAG, MQTT, PLC ni ML. `AssignmentService` es el punto de extensión para inteligencia/predicción futura.
+- Contraseñas con bcrypt, JWT de acceso/refresh (renovación automática en el cliente), RBAC y verificación de propiedad por ticket.
+- Endpoints de ML exclusivos de ADMIN y JEFE_TI. La búsqueda y el asistente solo usan tickets que el usuario puede ver.
+- La API key del LLM vive únicamente en el backend (`SecretStr`); nunca se envía al navegador ni se registra en logs. Las conversaciones no se guardan en la auditoría, solo el uso.
+- Configure TLS, CORS institucional, rotación de refresh tokens y almacenamiento externo de adjuntos antes de exponerlo a Internet.

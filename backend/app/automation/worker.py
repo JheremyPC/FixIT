@@ -342,7 +342,20 @@ class AutomationWorker:
 
             logger.info("FixIT automation procesó %s (%s)", event_type, event["id"])
 
+    def _events_table_exists(self) -> bool:
+        with self.engine.connect() as conn:
+            return conn.execute(text("SELECT to_regclass('automation_events') IS NOT NULL")).scalar() is True
+
     async def run(self) -> None:
+        try:
+            exists = await asyncio.to_thread(self._events_table_exists)
+        except Exception:
+            logger.exception("No se pudo verificar la tabla automation_events")
+            exists = False
+        if not exists:
+            # Local databases created by Alembic do not include the Supabase triggers/table.
+            logger.warning("Tabla automation_events no encontrada: worker de automatización deshabilitado")
+            return
         logger.info("FixIT Automation Worker iniciado")
         while not self._stop.is_set():
             event = None

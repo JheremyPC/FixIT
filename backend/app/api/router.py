@@ -2,9 +2,9 @@ import csv
 import io
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
 from sqlalchemy import func
@@ -18,6 +18,7 @@ from app.security.auth import ALGORITHM, create_token, current_user, hash_passwo
 from app.services.assignment import AssignmentService, WEIGHT_DEFAULTS
 from app.services.audit import audit, history, notify
 from app.services.tickets import assign, initial_due, next_number, set_state, state
+from app.synthetic.catalog import SYNTHETIC_TICKET_PREFIX
 
 api = APIRouter(prefix="/api")
 
@@ -30,7 +31,8 @@ def ticket_data(t):
             "area": {"id":t.area.id,"name":t.area.name}, "category": {"id":t.category.id,"name":t.category.name},
             "priority": {"id":t.priority.id,"code":t.priority.code,"name":t.priority.name,"color":t.priority.color},
             "state": t.state.code, "due_at": t.due_at, "created_at": t.created_at, "updated_at": t.updated_at,
-            "diagnosis": t.diagnosis, "solution": t.solution, "resolved_at": t.resolved_at, "rating": t.rating.score if t.rating else None}
+            "diagnosis": t.diagnosis, "solution": t.solution, "resolved_at": t.resolved_at, "rating": t.rating.score if t.rating else None,
+            "synthetic": t.number.startswith(SYNTHETIC_TICKET_PREFIX)}
 
 def get_ticket(db, ticket_id):
     ticket = db.query(Ticket).options(joinedload(Ticket.requester).joinedload(User.role), joinedload(Ticket.technician).joinedload(Technician.user), joinedload(Ticket.area), joinedload(Ticket.category), joinedload(Ticket.priority), joinedload(Ticket.state), joinedload(Ticket.rating)).filter(Ticket.id == ticket_id).first()
@@ -164,12 +166,27 @@ def create_ticket(payload: TicketCreate, request: Request, actor: User = Depends
     db.commit(); return {"id":ticket.id,"number":ticket.number,"assigned":bool(candidate)}
 
 @api.get("/tickets")
-def list_tickets(state_code: str | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    query=db.query(Ticket).options(joinedload(Ticket.requester).joinedload(User.role),joinedload(Ticket.technician).joinedload(Technician.user),joinedload(Ticket.area),joinedload(Ticket.category),joinedload(Ticket.priority),joinedload(Ticket.state),joinedload(Ticket.rating))
+def list_tickets(response: Response, state_code: str | None = None, q: str | None = Query(None, max_length=120),
+                 priority_code: str | None = None, category_id: str | None = None, source: str = Query("all", pattern="^(all|real|synthetic)$"),
+                 limit: int | None = Query(None, ge=1, le=500), offset: int = Query(0, ge=0),
+                 user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Lists tickets visible to the user. Without ``limit`` it returns all of them (backwards compatible);
+    the total matching count is always sent in the ``X-Total-Count`` header."""
+    query=db.query(Ticket)
     if user.role.code == "USUARIO": query=query.filter(Ticket.requester_id==user.id)
     elif user.role.code == "TECNICO": query=query.filter(Ticket.technician_id==user.technician.id) if user.technician else query.filter(False)
     if state_code: query=query.join(Ticket.state).filter(TicketState.code==state_code)
-    return [ticket_data(x) for x in query.order_by(Ticket.created_at.desc()).all()]
+    if priority_code: query=query.join(Ticket.priority).filter(Priority.code==priority_code)
+    if category_id: query=query.filter(Ticket.category_id==category_id)
+    if source == "real": query=query.filter(~Ticket.number.like(f"{SYNTHETIC_TICKET_PREFIX}%"))
+    elif source == "synthetic": query=query.filter(Ticket.number.like(f"{SYNTHETIC_TICKET_PREFIX}%"))
+    if q and q.strip():
+        term=f"%{q.strip().lower()}%"
+        query=query.filter(func.lower(Ticket.title).like(term) | func.lower(Ticket.number).like(term))
+    response.headers["X-Total-Count"]=str(query.order_by(None).count())
+    query=query.options(joinedload(Ticket.requester).joinedload(User.role),joinedload(Ticket.technician).joinedload(Technician.user),joinedload(Ticket.area),joinedload(Ticket.category),joinedload(Ticket.priority),joinedload(Ticket.state),joinedload(Ticket.rating)).order_by(Ticket.created_at.desc())
+    if limit: query=query.offset(offset).limit(limit)
+    return [ticket_data(x) for x in query.all()]
 
 @api.get("/tickets/{ticket_id}")
 def read_ticket(ticket_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -269,16 +286,22 @@ def dashboard(actor: User=Depends(current_user),db: Session=Depends(get_db)):
     by_priority={x.code:sum(1 for t in tickets if t.priority_id==x.id) for x in db.query(Priority).all()}
     by_area={x.name:sum(1 for t in tickets if t.area_id==x.id) for x in db.query(Area).all()}
     by_state={code:value for code,value in counts.items() if value}
-    trend={}
+    # Daily trend for the last 30 days and monthly trend for the last 12 months (keeps charts readable with large datasets).
+    trend={}; trend_monthly={}
+    since=(now-timedelta(days=29)).date()
+    for i in range(30): trend[(since+timedelta(days=i)).isoformat()]=0
     for t in tickets:
-        key=t.created_at.strftime("%Y-%m-%d")
-        trend[key]=trend.get(key,0)+1
+        created=t.created_at if t.created_at.tzinfo else t.created_at.replace(tzinfo=timezone.utc)
+        if created.date()>=since: trend[created.date().isoformat()]=trend.get(created.date().isoformat(),0)+1
+        if created>=now-timedelta(days=365): trend_monthly[created.strftime("%Y-%m")]=trend_monthly.get(created.strftime("%Y-%m"),0)+1
+    trend_monthly=dict(sorted(trend_monthly.items()))
+    synthetic_total=sum(t.number.startswith(SYNTHETIC_TICKET_PREFIX) for t in tickets)
     performance=[]
     if actor.role.code in {"ADMIN","JEFE_TI"}:
         for tech in db.query(Technician).options(joinedload(Technician.user)).all():
             mine=[t for t in tickets if t.technician_id==tech.id]; score=db.query(func.avg(Rating.score)).filter(Rating.technician_id==tech.id).scalar() or 0
             performance.append({"name":tech.user.full_name,"assigned":len(mine),"resolved":sum(t.state.code in {"RESUELTO","CERRADO"} for t in mine),"rating":round(float(score),2)})
-    return {"total":len(tickets),"counts":counts,"critical":sum(t.priority.code in {"CRITICA","ALTA"} for t in tickets),"overdue":sum(t.due_at and t.due_at<now and t.state.code not in {"RESUELTO","CERRADO","CANCELADO"} for t in tickets),"avg_attention_hours":avg_attention,"avg_resolution_hours":avg_resolution,"satisfaction":round(float(ratings),2),"by_category":by_category,"by_priority":by_priority,"by_area":by_area,"by_state":by_state,"trend":trend,"technician_performance":performance}
+    return {"total":len(tickets),"counts":counts,"critical":sum(t.priority.code in {"CRITICA","ALTA"} for t in tickets),"overdue":sum(bool(t.due_at) and (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc))<now and t.state.code not in {"RESUELTO","CERRADO","CANCELADO"} for t in tickets),"avg_attention_hours":avg_attention,"avg_resolution_hours":avg_resolution,"satisfaction":round(float(ratings),2),"by_category":by_category,"by_priority":by_priority,"by_area":by_area,"by_state":by_state,"trend":trend,"trend_monthly":trend_monthly,"synthetic_total":synthetic_total,"technician_performance":performance}
 
 @api.get("/audit")
 def audit_list(_: User=Depends(require_roles("ADMIN","JEFE_TI")),db: Session=Depends(get_db)):

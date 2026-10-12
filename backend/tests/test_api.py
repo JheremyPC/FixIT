@@ -1,6 +1,6 @@
 import os
 import uuid
-os.environ["DATABASE_URL"] = "sqlite:///./test_fixit.db"
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_fixit.db")  # conftest.py provides an isolated DB
 from fastapi.testclient import TestClient
 from app.main import app
 

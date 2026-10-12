@@ -1,940 +1,971 @@
-const $ = (s) => document.querySelector(s);
+"use strict";
+/* FixIT web client — core, navigation and operational pages. AI pages live in ai.js. */
 
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"]/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;"
-  }[c]));
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let me = null;
-let catalogs = {};
+const ROLE_LABEL = { ADMIN: "Administrador", JEFE_TI: "Jefe de TI", TECNICO: "Técnico", USUARIO: "Solicitante" };
+const STATE_LABEL = { NUEVO: "Nuevo", ASIGNADO: "Asignado", EN_ATENCION: "En atención", EN_ESPERA: "En espera", RESUELTO: "Resuelto",
+  CERRADO: "Cerrado", REABIERTO: "Reabierto", CANCELADO: "Cancelado", ESCALADO: "Escalado" };
+const PRIORITY_LABEL = { BAJA: "Baja", MEDIA: "Media", ALTA: "Alta", CRITICA: "Crítica" };
+const PRIORITY_COLOR = { BAJA: "var(--seq-2)", MEDIA: "var(--seq-3)", ALTA: "var(--seq-4)", CRITICA: "var(--seq-5)" };
+const OPEN_STATES = ["NUEVO", "ASIGNADO", "EN_ATENCION", "EN_ESPERA", "REABIERTO", "ESCALADO"];
+const isSupervisor = () => ["ADMIN", "JEFE_TI"].includes(App.me?.role);
 
+const App = { me: null, catalogs: {}, page: null };
+const Pages = {};
+const Actions = {};
 const modal = $("#modal");
 
-function getToken() {
-  return localStorage.getItem("fixitToken");
+/* ---------- Session & API ---------- */
+const Session = {
+  token: () => localStorage.getItem("fixitToken"),
+  refreshToken: () => localStorage.getItem("fixitRefresh"),
+  save(result) {
+    localStorage.setItem("fixitToken", result.access_token);
+    if (result.refresh_token) localStorage.setItem("fixitRefresh", result.refresh_token);
+  },
+  clear() {
+    localStorage.removeItem("fixitToken");
+    localStorage.removeItem("fixitRefresh");
+    App.me = null;
+  },
+};
+
+class ApiError extends Error {
+  constructor(message, status, data) { super(message); this.status = status; this.data = data; }
 }
 
-function getRefreshToken() {
-  return localStorage.getItem("fixitRefresh");
+async function tryRefresh() {
+  const refresh = Session.refreshToken();
+  if (!refresh) return false;
+  try {
+    const res = await fetch("/api/auth/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: refresh }) });
+    if (!res.ok) return false;
+    Session.save(await res.json());
+    return true;
+  } catch { return false; }
 }
 
-function clearSession() {
-  localStorage.removeItem("fixitToken");
-  localStorage.removeItem("fixitRefresh");
-  me = null;
-}
-
-function showLogin() {
-  const login = $("#login");
-  const app = $("#app");
-
-  if (login) login.hidden = false;
-  if (app) app.hidden = true;
-}
-
-function showApp() {
-  const login = $("#login");
-  const app = $("#app");
-
-  if (login) login.hidden = true;
-  if (app) app.hidden = false;
-}
-
-function setIdentity() {
-  const identity = $("#identity");
-
-  if (!identity || !me) return;
-
-  identity.innerHTML =
-    `<b>${esc(me.full_name)}</b><small>${esc(me.role)}</small>`;
+async function request(path, opt = {}, retry = true) {
+  const options = { ...opt, headers: new Headers(opt.headers || {}) };
+  const token = Session.token();
+  if (token) options.headers.set("Authorization", `Bearer ${token}`);
+  if (options.body && !(options.body instanceof FormData) && !options.headers.has("Content-Type")) options.headers.set("Content-Type", "application/json");
+  let res;
+  try {
+    res = await fetch(`/api${path}`, options);
+  } catch {
+    throw new ApiError("No se pudo conectar con el servidor. Revisa tu conexión.", 0);
+  }
+  if (res.status === 401 && retry && path !== "/auth/login" && await tryRefresh()) return request(path, opt, false);
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch { /* not JSON */ }
+    let message = data?.detail || `Error ${res.status}`;
+    if (res.status === 422 && Array.isArray(data?.errors)) message = "Revisa los datos: " + data.errors.map((e) => e.msg).slice(0, 3).join("; ");
+    if (res.status === 401) {
+      Session.clear();
+      showLogin();
+      message = "Tu sesión expiró. Vuelve a iniciar sesión.";
+    }
+    if (typeof message !== "string") message = JSON.stringify(message);
+    throw new ApiError(message, res.status, data);
+  }
+  return res;
 }
 
 async function api(path, opt = {}) {
-  const options = { ...opt };
-  const headers = new Headers(options.headers || {});
-  const token = getToken();
-
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  if (
-    options.body &&
-    !(options.body instanceof FormData) &&
-    !headers.has("Content-Type")
-  ) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  options.headers = headers;
-
-  const response = await fetch(`/api${path}`, options);
-
-  const contentType = response.headers.get("content-type") || "";
-  let data = null;
-
-  if (contentType.includes("application/json")) {
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
-    }
-  } else {
-    data = response;
-  }
-
-  if (!response.ok) {
-    const error = new Error(
-      data?.detail || `Error HTTP ${response.status}`
-    );
-
-    error.status = response.status;
-    error.data = data;
-
-    throw error;
-  }
-
-  return data;
+  const res = await request(path, opt);
+  const type = res.headers.get("content-type") || "";
+  return type.includes("application/json") ? res.json() : res;
 }
 
-function flash(msg, error = false) {
-  const container = $("#flash");
-
-  if (!container) return;
-
-  container.innerHTML =
-    `<div class="flash ${error ? "error" : ""}">${esc(msg)}</div>`;
-
-  setTimeout(() => {
-    container.innerHTML = "";
-  }, 4500);
+async function apiWithTotal(path) {
+  const res = await request(path);
+  return { data: await res.json(), total: Number(res.headers.get("X-Total-Count") || 0) };
 }
 
-function title(t, n = "") {
-  const pageTitle = $("#page-title");
-  const pageNote = $("#page-note");
+const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 
-  if (pageTitle) pageTitle.textContent = t;
-  if (pageNote) pageNote.textContent = n;
-}
-
-function fmt(d) {
-  return d
-    ? new Date(d).toLocaleString("es-PE", {
-        dateStyle: "short",
-        timeStyle: "short"
-      })
-    : "—";
-}
-
-function state(s) {
-  const key = String(s ?? "").replaceAll("_", " ");
-  const cls = String(s ?? "").toLowerCase().replaceAll("_", "-");
-  return `<span class="status-pill status-${esc(cls)}"><span class="status-dot"></span>${esc(key)}</span>`;
-}
-
-function nav() {
-  if (!me) return;
-  const role = me.role;
-  const items = [
-    ["dashboard", "Panel", "▦"],
-    ["tickets", "Tickets", "◫"]
-  ];
-  if (role === "USUARIO") items.push(["newticket", "Nueva solicitud", "＋"]);
-  items.push(["notifications", "Notificaciones", "◉"]);
-  if (role === "ADMIN") {
-    items.push(["admin", "Administración", "⚙"], ["settings", "Asignación", "◌"]);
-  }
-  if (["ADMIN", "JEFE_TI"].includes(role)) {
-    items.push(["audit", "Auditoría", "◷"], ["reports", "Reportes", "⇩"]);
-  }
-  const navEl = $("#nav");
-  if (!navEl) return;
-  navEl.innerHTML = items.map(([id, name, icon]) =>
-    `<button type="button" data-page="${id}" aria-label="${esc(name)}"><span class="nav-icon">${icon}</span><span>${esc(name)}</span></button>`
-  ).join("");
-  navEl.onclick = (e) => {
-    const button = e.target.closest("[data-page]");
-    if (!button) return;
-    go(button.dataset.page);
-  };
-}
-
-async function init() {
-  const token = getToken();
-
-  if (!token) {
-    showLogin();
-    return;
-  }
-
+async function download(path, filename) {
   try {
-    me = await api("/auth/me");
-
-    if (!me?.id) {
-      throw new Error("La sesión no es válida.");
-    }
-
-    showApp();
-    setIdentity();
-    nav();
-
-    try {
-      await noticeCount();
-    } catch (e) {
-      console.warn("No se pudo cargar el contador:", e);
-    }
-
-    try {
-      await dashboard();
-    } catch (e) {
-      console.error("Error al cargar dashboard:", e);
-      flash(
-        "Sesión iniciada, pero no se pudo cargar el panel.",
-        true
-      );
-    }
-  } catch (error) {
-    console.warn("No se pudo restaurar la sesión:", error);
-    clearSession();
-    showLogin();
-  }
-}
-
-function logout() {
-  clearSession();
-  showLogin();
-
-  const content = $("#content");
-  const identity = $("#identity");
-
-  if (content) content.innerHTML = "";
-  if (identity) identity.innerHTML = "";
-
-  flash("Sesión cerrada.");
-}
-
-async function noticeCount() {
-  if (!me) return;
-
-  const n = await api("/notifications");
-
-  const unread = $("#unread");
-
-  if (!unread) return;
-
-  unread.textContent = Array.isArray(n)
-    ? (n.filter((x) => !x.read).length || "")
-    : "";
-}
-
-async function go(page) {
-  if (!me) {
-    showLogin();
-    return;
-  }
-
-  document
-    .querySelectorAll("#nav button")
-    .forEach((button) => {
-      button.classList.toggle(
-        "active",
-        button.dataset.page === page
-      );
-    });
-
-  const pages = {
-    dashboard,
-    tickets,
-    newticket,
-    notifications,
-    admin,
-    settings,
-    audit,
-    reports
-  };
-
-  try {
-    await (pages[page] || dashboard)();
-  } catch (error) {
-    console.error(`Error en página ${page}:`, error);
-
-    if (error.status === 401) {
-      clearSession();
-      showLogin();
-      flash("La sesión ha expirado.", true);
-      return;
-    }
-
-    flash(
-      error.message || "No se pudo cargar la sección.",
-      true
-    );
-  }
-}
-
-function bars(values, total) {
-  if (!values || typeof values !== "object") return '<p class="muted">Sin datos.</p>';
-  const entries = Object.entries(values);
-  if (!entries.length) return '<p class="muted">Sin datos.</p>';
-  const denominator = Number(total) || entries.reduce((sum, [, value]) => sum + (Number(value) || 0), 0) || 1;
-  return `<div class="bar-list">${entries.map(([name, value]) => {
-    const numeric = Number(value) || 0;
-    const width = Math.max(0, Math.min(100, numeric / denominator * 100));
-    return `<div class="bar-row"><div class="bar-label"><span>${esc(name)}</span><strong>${numeric}</strong></div><div class="bar"><i style="width:${width}%"></i></div></div>`;
-  }).join("")}</div>`;
-}
-
-async function dashboard() {
-  title("Panel de control", "Resumen operativo en tiempo real");
-  const d = await api("/dashboard");
-  const c = d?.counts || {};
-  const performance = Array.isArray(d?.technician_performance) ? d.technician_performance : [];
-  const content = $("#content");
-  if (!content) throw new Error("No se encontró el contenedor del dashboard.");
-  const cards = [
-    ["Tickets totales", d?.total ?? 0, "Total registrado", "total"],
-    ["Nuevos", c.NUEVO ?? 0, "Pendientes de atención", "new"],
-    ["En atención", c.EN_ATENCION ?? 0, "Trabajo activo", "active"],
-    ["Resueltos", (c.RESUELTO ?? 0) + (c.CERRADO ?? 0), "Solucionados", "done"],
-    ["Críticos", d?.critical ?? 0, "Alta prioridad", "critical"],
-    ["Vencidos", d?.overdue ?? 0, "Fuera de SLA", "overdue"],
-    ["Resolución", `${d?.avg_resolution_hours ?? 0}h`, "Promedio", "time"],
-    ["Satisfacción", `${d?.satisfaction || "—"}/5`, "Valoración media", "rating"]
-  ];
-  content.innerHTML = `
-    <section class="kpi-grid">
-      ${cards.map(([label, value, note, kind]) => `<article class="kpi-card kpi-${kind}"><div class="kpi-top"><span>${esc(label)}</span><span class="kpi-mark"></span></div><strong>${esc(value)}</strong><small>${esc(note)}</small></article>`).join("")}
-    </section>
-    <section class="dashboard-grid">
-      <article class="panel dashboard-panel"><div class="panel-head"><div><span class="eyebrow">Distribución</span><h2>Tickets por categoría</h2></div><span class="panel-icon">▤</span></div>${bars(d?.by_category, d?.total)}</article>
-      <article class="panel dashboard-panel"><div class="panel-head"><div><span class="eyebrow">Prioridad</span><h2>Criticidad</h2></div><span class="panel-icon">◈</span></div>${bars(d?.by_priority, d?.total)}</article>
-      <article class="panel dashboard-panel"><div class="panel-head"><div><span class="eyebrow">Operación</span><h2>Por área y estado</h2></div><span class="panel-icon">◎</span></div>${bars(d?.by_area, d?.total)}<div class="section-divider"></div>${bars(d?.by_state, d?.total)}</article>
-      <article class="panel dashboard-panel"><div class="panel-head"><div><span class="eyebrow">Equipo</span><h2>${me.role === "TECNICO" ? "Mi desempeño" : "Rendimiento de técnicos"}</h2></div><span class="panel-icon">◌</span></div>${performance.length ? `<div class="performance-list">${performance.map(x => `<div class="performance-row"><div><strong>${esc(x?.name)}</strong><small>${x?.assigned ?? 0} asignados · ${x?.resolved ?? 0} resueltos</small></div><span class="rating-badge">${esc(x?.rating ?? "—")}/5</span></div>`).join("")}</div>` : '<p class="empty-state">Aún no hay datos de rendimiento.</p>'}</article>
-    </section>
-    <article class="panel trend-panel"><div class="panel-head"><div><span class="eyebrow">Tendencia</span><h2>Evolución temporal</h2></div><span class="panel-icon">⌁</span></div>${bars(d?.trend, d?.total)}</article>
-  `;
-}
-
-async function tickets() {
-  title(me.role === "TECNICO" ? "Mis tickets asignados" : "Tickets", "Seguimiento y atención");
-  const rows = await api("/tickets");
-  $("#content").innerHTML = `
-    <section class="page-toolbar"><div><span class="eyebrow">Gestión operativa</span><h2 class="section-title">${me.role === "TECNICO" ? "Mis tickets asignados" : "Tickets"}</h2></div><div class="toolbar-actions"><label class="search-box"><span>⌕</span><input id="filter" placeholder="Buscar ticket o título"></label>${me.role === "USUARIO" ? `<button type="button" class="primary-action" onclick="go('newticket')">＋ Nueva solicitud</button>` : ""}</div></section>
-    <div class="table-card table-wrap"><table><thead><tr><th>Ticket</th><th>Solicitud</th><th>Estado</th><th>Prioridad</th><th>Técnico</th><th>Actualización</th></tr></thead><tbody id="ticket-rows">${Array.isArray(rows) && rows.length ? rows.map(ticketRow).join("") : `<tr><td colspan="6"><div class="empty-state table-empty"><strong>No hay tickets</strong><span>Cuando se registre una solicitud aparecerá aquí.</span></div></td></tr>`}</tbody></table></div>
-  `;
-  const filter = $("#filter");
-  if (filter) filter.oninput = e => { const q = e.target.value.toLowerCase(); document.querySelectorAll(".ticket-row").forEach(row => { row.hidden = !row.textContent.toLowerCase().includes(q); }); };
-}
-
-function ticketRow(t) {
-  const priorityName = t?.priority?.name || "—";
-  return `<tr class="ticket-row" data-ticket-id="${esc(t?.id)}" tabindex="0" role="button"><td><strong class="ticket-number">${esc(t?.number)}</strong></td><td><div class="ticket-title-cell"><strong>${esc(t?.title)}</strong><small>${fmt(t?.created_at)}</small></div></td><td>${state(t?.state)}</td><td><span class="priority-dot" style="background:${esc(t?.priority?.color || "#94a3b8")}"></span>${esc(priorityName)}</td><td>${esc(t?.technician?.name || "Sin asignar")}</td><td class="updated-cell">${fmt(t?.updated_at)}</td></tr>`;
-}
-
-async function loadCatalogs() {
-  const keys = [
-    "areas",
-    "categories",
-    "priorities",
-    "specialties"
-  ];
-
-  await Promise.all(
-    keys.map(async (key) => {
-      catalogs[key] =
-        await api("/catalogs/" + key);
-    })
-  );
-}
-
-async function newticket() {
-  title("Nueva solicitud", "Registra el problema y el sistema buscará un técnico compatible");
-  await loadCatalogs();
-  $("#content").innerHTML = `<section class="form-shell"><div class="form-hero"><div><span class="eyebrow">Nueva incidencia</span><h2>Crear solicitud de soporte</h2><p>Completa la información para que FixIT pueda clasificar y asignar correctamente tu solicitud.</p></div><span class="hero-icon">＋</span></div><div class="panel form-panel"><form id="ticket-form"><div class="form-grid"><label>Título<input name="title" placeholder="Ej. No tengo acceso a la impresora" required minlength="5"></label><label>Área<select name="area_id">${(catalogs.areas || []).filter(x => x.active).map(opt).join("")}</select></label><label class="full">Descripción<textarea name="description" placeholder="Describe el problema, impacto y desde cuándo ocurre." required minlength="10"></textarea></label><label>Categoría<select name="category_id">${(catalogs.categories || []).filter(x => x.active).map(opt).join("")}</select></label><label>Prioridad<select name="priority_id"><option value="">Sugerida por el sistema</option>${(catalogs.priorities || []).map(x => `<option value="${esc(x.id)}">${esc(x.name)} · SLA ${esc(x.sla_hours)}h</option>`).join("")}</select></label></div><div class="form-footer"><small>La prioridad puede ajustarse según el impacto conocido.</small><button type="submit" class="primary-action">Crear ticket y buscar técnico</button></div></form></div></section>`;
-  $("#ticket-form").onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target)); if (!data.priority_id) delete data.priority_id; try { const result = await api("/tickets", { method: "POST", body: JSON.stringify(data) }); flash(`Ticket ${result.number} creado${result.assigned ? " y asignado automáticamente." : ". Un supervisor deberá asignarlo."}`); await go("tickets"); } catch (error) { flash(error.message, true); } };
-}
-
-function opt(x) {
-  return `
-    <option value="${x.id}">
-      ${esc(x.name)}
-    </option>
-  `;
-}
-
-async function openTicket(id) {
-  const t = await api("/tickets/" + id);
-  const isRequester = t?.requester?.id === me.id;
-  const isCurrentTech = !!t?.technician && t.technician.id === me.technician_id;
-  let controls = "";
-  if (me.role === "TECNICO" && isCurrentTech) {
-    if (t.state === "ASIGNADO") controls += `<button type="button" class="primary-action" onclick="acceptTicket('${esc(id)}')">Aceptar e iniciar</button>`;
-    if (["EN_ATENCION", "EN_ESPERA"].includes(t.state)) controls += `<button type="button" class="ghost" onclick="transitionTicket('${esc(id)}','EN_ESPERA')">Poner en espera</button><button type="button" class="primary-action" onclick="resolveTicket('${esc(id)}')">Resolver ticket</button>`;
-  }
-  if (isRequester && t.state === "RESUELTO") controls += `<button type="button" class="primary-action" onclick="transitionTicket('${esc(id)}','CERRADO')">Confirmar y cerrar</button><button type="button" class="danger" onclick="transitionTicket('${esc(id)}','REABIERTO')">Reabrir</button>`;
-  if (isRequester && ["RESUELTO", "CERRADO"].includes(t.state) && !t.rating) controls += `<button type="button" class="ghost" onclick="rateTicket('${esc(id)}')">Calificar atención</button>`;
-  if (["ADMIN", "JEFE_TI"].includes(me.role)) controls += `<button type="button" class="ghost" onclick="assignTicket('${esc(id)}')">Asignar / reasignar</button>`;
-  modal.showModal();
-  $("#modal-content").innerHTML = `<div class="modal-head"><div><span class="eyebrow">Detalle del ticket</span><h2>${esc(t.number)} · ${esc(t.title)}</h2></div><button class="modal-close close" type="button" onclick="modal.close()">×</button></div><div class="ticket-summary"><div><span>Estado</span>${state(t.state)}</div><div><span>Prioridad</span><strong>${esc(t.priority?.name || "—")}</strong></div><div><span>Técnico</span><strong>${esc(t.technician?.name || "Sin asignar")}</strong></div></div><div class="modal-description">${esc(t.description)}</div><div class="detail-grid"><div class="detail-card"><span class="eyebrow">Atención técnica</span><h3>Seguimiento</h3><p><b>Diagnóstico</b><br>${esc(t.diagnosis || "Pendiente")}</p><p><b>Solución</b><br>${esc(t.solution || "Pendiente")}</p></div><div class="detail-card"><span class="eyebrow">Fechas</span><h3>Cronología</h3><p>Creado: ${fmt(t.created_at)}</p><p>Vence: ${fmt(t.due_at)}</p><p>Resuelto: ${fmt(t.resolved_at)}</p></div></div><div class="actions modal-actions">${controls}</div><div class="modal-section"><div class="section-heading"><h3>Comentarios</h3><span>${(t.comments || []).length}</span></div><div class="comment-list">${(t.comments || []).map(c => `<div class="comment-item"><div class="comment-meta"><strong>${esc(c.author)}</strong><small>${fmt(c.created_at)}${c.internal ? " · interno" : ""}</small></div><div>${esc(c.body)}</div></div>`).join("") || '<div class="empty-state"><strong>Sin comentarios</strong><span>Aún no hay actualizaciones.</span></div>'}</div><form id="comment-form" class="inline-form"><textarea name="body" placeholder="Escriba una actualización" required></textarea>${["ADMIN", "JEFE_TI", "TECNICO"].includes(me.role) ? `<label class="check-label"><input type="checkbox" name="internal"> Nota interna</label>` : ""}<button type="submit" class="primary-action">Agregar comentario</button></form></div><div class="modal-section"><div class="section-heading"><h3>Historial</h3><span>${(t.history || []).length}</span></div><div class="timeline">${(t.history || []).map(h => `<div class="timeline-item"><span class="timeline-dot"></span><div><strong>${esc(h.event)}</strong><p>${esc(h.detail)}</p><small>${esc(h.actor)} · ${fmt(h.created_at)}</small></div></div>`).join("") || '<div class="empty-state"><strong>Sin historial</strong></div>'}</div></div><div class="modal-section"><div class="section-heading"><h3>Adjuntos</h3><span>${(t.attachments || []).length}</span></div>${(t.attachments || []).map(a => `<a class="attachment-item" href="/api/attachments/${esc(a.id)}" target="_blank" rel="noopener noreferrer">↗ ${esc(a.name)}</a>`).join("") || '<p class="muted">No hay archivos adjuntos.</p>'}<form id="attachment-form" class="attachment-form"><input name="file" type="file" accept="image/png,image/jpeg,application/pdf,text/plain" required><button type="submit" class="ghost">Adjuntar evidencia</button></form></div>`;
-  $("#comment-form").onsubmit = e => sendComment(e, id);
-  $("#attachment-form").onsubmit = e => sendAttachment(e, id);
-}
-
-async function sendComment(e, id) {
-  e.preventDefault();
-
-  const form = new FormData(e.target);
-
-  try {
-    await api("/tickets/" + id + "/comments", {
-      method: "POST",
-      body: JSON.stringify({
-        body: form.get("body"),
-        internal: form.get("internal") === "on"
-      })
-    });
-
-    await openTicket(id);
-    await noticeCount();
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function sendAttachment(e, id) {
-  e.preventDefault();
-
-  try {
-    await api("/tickets/" + id + "/attachments", {
-      method: "POST",
-      body: new FormData(e.target)
-    });
-
-    await openTicket(id);
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function acceptTicket(id) {
-  try {
-    await api("/tickets/" + id + "/accept", {
-      method: "POST"
-    });
-
-    flash("Ticket aceptado e iniciado.");
-    await openTicket(id);
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function transitionTicket(id, target) {
-  try {
-    await api("/tickets/" + id + "/transition", {
-      method: "POST",
-      body: JSON.stringify({
-        state: target
-      })
-    });
-
-    flash("Estado actualizado.");
-    await openTicket(id);
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function resolveTicket(id) {
-  $("#modal-content").insertAdjacentHTML("afterbegin", `<div class="action-overlay-panel"><div class="panel-head"><div><span class="eyebrow">Cierre técnico</span><h3>Registrar solución</h3></div></div><form id="resolve-form"><label>Diagnóstico<textarea name="diagnosis" placeholder="Qué originó el problema"></textarea></label><label>Solución aplicada<textarea name="solution" placeholder="Qué se hizo para resolverlo" required></textarea></label><button type="submit" class="primary-action">Marcar como resuelto</button></form></div>`);
-  $("#resolve-form").onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target)); try { await api("/tickets/" + id + "/transition", { method: "POST", body: JSON.stringify({ ...data, state: "RESUELTO" }) }); flash("Ticket resuelto."); await openTicket(id); } catch (error) { flash(error.message, true); } };
-}
-
-async function assignTicket(id) {
-  const technicians = await api("/technicians");
-  $("#modal-content").insertAdjacentHTML("afterbegin", `<div class="action-overlay-panel"><div class="panel-head"><div><span class="eyebrow">Asignación</span><h3>Seleccionar técnico</h3></div></div><form id="assign-form"><label>Técnico<select name="technician_id"><option value="">Seleccionar automáticamente</option>${(technicians || []).filter(t => t.available).map(t => `<option value="${esc(t.id)}">${esc(t.name)} · ${esc((t.specialties || []).join(", ") || "General")}</option>`).join("")}</select></label><label>Motivo<textarea name="reason" placeholder="Opcional"></textarea></label><button type="submit" class="primary-action">Registrar asignación</button></form></div>`);
-  $("#assign-form").onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target)); if (!data.technician_id) delete data.technician_id; try { await api("/tickets/" + id + "/assign", { method: "POST", body: JSON.stringify(data) }); flash("Asignación registrada."); await openTicket(id); } catch (error) { flash(error.message, true); } };
-}
-
-async function rateTicket(id) {
-  $("#modal-content").insertAdjacentHTML("afterbegin", `<div class="action-overlay-panel"><div class="panel-head"><div><span class="eyebrow">Satisfacción</span><h3>Calificar atención</h3></div></div><form id="rating-form"><label>Puntuación<select name="score"><option value="5">5 — Excelente</option><option value="4">4 — Buena</option><option value="3">3 — Regular</option><option value="2">2 — Deficiente</option><option value="1">1 — Muy deficiente</option></select></label><label>¿Se solucionó el problema?<select name="solved"><option value="true">Sí</option><option value="false">No</option></select></label><label>Comentario<textarea name="comment" placeholder="Cuéntanos cómo fue la atención"></textarea></label><button type="submit" class="primary-action">Enviar calificación</button></form></div>`);
-  $("#rating-form").onsubmit = async e => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target)); data.score = Number(data.score); data.solved = data.solved === "true"; try { await api("/tickets/" + id + "/rating", { method: "POST", body: JSON.stringify(data) }); flash("Gracias por calificar la atención."); await openTicket(id); } catch (error) { flash(error.message, true); } };
-}
-
-async function notifications() {
-  title("Notificaciones", "Eventos relevantes de sus tickets");
-  const rows = await api("/notifications");
-  $("#content").innerHTML = `<section class="page-toolbar"><div><span class="eyebrow">Centro de actividad</span><h2 class="section-title">Notificaciones</h2></div></section><div class="notification-list">${(rows || []).map(n => `<article class="notification-card ${n.read ? "read" : "unread"}"><div class="notification-mark">${n.read ? "✓" : "•"}</div><div class="notification-body"><div class="notification-top"><strong>${esc(n.title)}</strong>${!n.read ? '<span class="new-badge">Nueva</span>' : ''}</div><p>${esc(n.body)}</p><small>${fmt(n.created_at)}</small>${!n.read ? `<button type="button" class="ghost notification-action" onclick="markRead('${esc(n.id)}')">Marcar como leída</button>` : ''}</div></article>`).join("") || '<div class="empty-state large-empty"><strong>No tienes notificaciones</strong><span>Te mostraremos aquí los eventos importantes.</span></div>'}</div>`;
-}
-
-async function markRead(id) {
-  try {
-    await api("/notifications/" + id + "/read", {
-      method: "PATCH"
-    });
-
-    await noticeCount();
-    await notifications();
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function admin() {
-  title("Administración", "Usuarios, técnicos y catálogos");
-  await loadCatalogs();
-  const [users, technicians] = await Promise.all([api("/users"), api("/technicians")]);
-  const userCount = (users || []).length;
-  const techCount = (technicians || []).length;
-  const activeCount = (users || []).filter(u => u.active).length;
-  $("#content").innerHTML = `<section class="admin-overview"><article class="summary-card"><span>Usuarios</span><strong>${userCount}</strong><small>Total registrado</small></article><article class="summary-card"><span>Técnicos</span><strong>${techCount}</strong><small>Perfiles operativos</small></article><article class="summary-card"><span>Activos</span><strong>${activeCount}</strong><small>Usuarios habilitados</small></article></section><div class="admin-grid"><article class="panel admin-form-card"><div class="panel-head"><div><span class="eyebrow">Acceso</span><h2>Crear usuario</h2></div></div><form id="user-form"><label>Nombre<input name="full_name" required></label><label>Correo<input type="email" name="email" required></label><label>Contraseña<input type="password" name="password" minlength="8" required></label><label>Rol<select name="role_code"><option value="USUARIO">USUARIO</option><option value="TECNICO">TECNICO</option><option value="JEFE_TI">JEFE_TI</option><option value="ADMIN">ADMIN</option></select></label><button type="submit" class="primary-action">Crear usuario</button></form></article><article class="panel admin-form-card"><div class="panel-head"><div><span class="eyebrow">Catálogos</span><h2>Agregar elemento</h2></div></div><form id="catalog-form"><label>Tipo<select name="kind"><option value="areas">Área</option><option value="categories">Categoría</option><option value="specialties">Especialidad</option></select></label><label>Nombre<input name="name" required></label><label>Descripción<textarea name="description"></textarea></label><label>Especialidad de categoría<select name="specialty_id"><option value="">No requerida</option>${(catalogs.specialties || []).map(opt).join("")}</select></label><button type="submit" class="primary-action">Guardar elemento</button></form></article></div><article class="panel admin-form-card technician-card"><div class="panel-head"><div><span class="eyebrow">Equipo</span><h2>Crear perfil técnico</h2></div></div><form id="tech-form" class="form-grid"><label>Usuario técnico<select name="user_id">${(users || []).filter(u => u.role === "TECNICO" && !(technicians || []).some(t => t.user_id === u.id)).map(u => `<option value="${esc(u.id)}">${esc(u.full_name)}</option>`).join("")}</select></label><label>Carga máxima<input type="number" name="max_load" value="8" min="1"></label><label class="full">Especialidades<select name="specialty_ids" multiple size="4">${(catalogs.specialties || []).map(opt).join("")}</select></label><div class="full"><button type="submit" class="primary-action">Crear perfil técnico</button></div></form></article><div class="table-card table-wrap"><table><thead><tr><th>Usuario</th><th>Correo</th><th>Rol</th><th>Estado</th></tr></thead><tbody>${(users || []).map(u => `<tr><td><strong>${esc(u.full_name)}</strong></td><td>${esc(u.email)}</td><td><span class="role-badge">${esc(u.role)}</span></td><td><span class="state-active ${u.active ? "on" : "off"}">${u.active ? "Activo" : "Inactivo"}</span></td></tr>`).join("")}</tbody></table></div>`;
-  $("#user-form").onsubmit = e => createUser(e);
-  $("#catalog-form").onsubmit = e => createCatalog(e);
-  $("#tech-form").onsubmit = e => createTech(e);
-}
-
-async function createUser(e) {
-  e.preventDefault();
-
-  try {
-    await api("/users", {
-      method: "POST",
-      body: JSON.stringify(
-        Object.fromEntries(
-          new FormData(e.target)
-        )
-      )
-    });
-
-    flash("Usuario creado.");
-    await admin();
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function createCatalog(e) {
-  e.preventDefault();
-
-  const data =
-    Object.fromEntries(
-      new FormData(e.target)
-    );
-
-  const kind = data.kind;
-
-  delete data.kind;
-
-  if (
-    kind !== "categories" ||
-    !data.specialty_id
-  ) {
-    delete data.specialty_id;
-  }
-
-  try {
-    await api("/catalogs/" + kind, {
-      method: "POST",
-      body: JSON.stringify(data)
-    });
-
-    await loadCatalogs();
-
-    flash("Catálogo creado.");
-    await admin();
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function createTech(e) {
-  e.preventDefault();
-
-  const form = new FormData(e.target);
-
-  const data = {
-    user_id: form.get("user_id"),
-    max_load: Number(form.get("max_load")),
-    available: true,
-    specialty_ids: form.getAll("specialty_ids")
-  };
-
-  try {
-    await api("/technicians", {
-      method: "POST",
-      body: JSON.stringify(data)
-    });
-
-    flash("Técnico creado.");
-    await admin();
-  } catch (error) {
-    flash(error.message, true);
-  }
-}
-
-async function settings() {
-  title("Configuración de asignación", "Ajusta cómo FixIT prioriza la selección automática");
-  const settingsData = await api("/settings");
-  $("#content").innerHTML = `<section class="settings-shell"><div class="panel settings-intro"><span class="eyebrow">Reglas del motor</span><h2>Pesos de asignación</h2><p>Estos valores se guardan en la base de datos y se aplican al cálculo automático del técnico.</p></div><div class="settings-list">${(settingsData || []).map(s => `<article class="panel setting-card"><div class="setting-info"><strong>${esc(s.key)}</strong><small>${esc(s.description || "Sin descripción")}</small></div><input aria-label="${esc(s.key)}" name="${esc(s.key)}" value="${esc(s.value)}" form="settings-form" pattern="0(\\.\\d+)?|1(\\.0+)?" required></article>`).join("")}</div><form id="settings-form" class="settings-save"><button type="submit" class="primary-action">Guardar configuración</button></form></section>`;
-  $("#settings-form").onsubmit = async e => { e.preventDefault(); const form = new FormData(e.target); try { for (const [key, value] of form) await api("/settings/" + key, { method: "PUT", body: JSON.stringify({ value }) }); flash("Configuración actualizada."); } catch (error) { flash(error.message, true); } };
-}
-
-async function audit() {
-  title("Auditoría", "Registro de operaciones relevantes");
-  const rows = await api("/audit");
-  $("#content").innerHTML = `<section class="page-toolbar"><div><span class="eyebrow">Trazabilidad</span><h2 class="section-title">Actividad del sistema</h2></div><span class="count-badge">${(rows || []).length} registros</span></section><div class="audit-list">${(rows || []).map(a => `<article class="audit-item"><div class="audit-icon">◷</div><div class="audit-main"><div><strong>${esc(a.action)}</strong><span class="audit-module">${esc(a.module)}</span></div><p>${esc(a.entity)} · ${esc(a.user)}</p></div><time>${fmt(a.created_at)}</time></article>`).join("") || '<div class="empty-state large-empty"><strong>No hay movimientos</strong><span>La actividad del sistema aparecerá aquí.</span></div>'}</div>`;
-}
-
-async function reports() {
-  title("Reportes", "Exportación institucional");
-  $("#content").innerHTML = `<section class="reports-shell"><div class="report-hero"><div><span class="eyebrow">Centro de reportes</span><h2>Exporta la información de FixIT</h2><p>Genera el reporte de tickets en el formato que necesites para análisis o presentación.</p></div><span class="hero-icon">⇩</span></div><div class="report-cards"><article class="panel report-card"><span class="report-icon">CSV</span><div><strong>CSV</strong><p>Datos tabulares para análisis y filtros.</p></div><button type="button" data-format="csv" class="primary-action">Descargar</button></article><article class="panel report-card"><span class="report-icon">XLS</span><div><strong>Excel</strong><p>Ideal para revisión y trabajo en hojas de cálculo.</p></div><button type="button" data-format="xlsx" class="primary-action">Descargar</button></article><article class="panel report-card"><span class="report-icon">PDF</span><div><strong>PDF</strong><p>Versión lista para compartir o presentar.</p></div><button type="button" data-format="pdf" class="primary-action">Descargar</button></article></div></section>`;
-  document.querySelectorAll("[data-format]").forEach(button => button.onclick = () => downloadReport(button.dataset.format));
-}
-
-async function downloadReport(format) {
-  const token = getToken();
-
-  if (!token) {
-    showLogin();
-    return;
-  }
-
-  try {
-    const response =
-      await fetch(
-        "/api/reports/tickets." + format,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-
-    if (response.status === 401) {
-      clearSession();
-      showLogin();
-      flash(
-        "La sesión ha expirado.",
-        true
-      );
-      return;
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        "No se pudo generar el reporte"
-      );
-    }
-
-    const blob = await response.blob();
-    const url =
-      URL.createObjectURL(blob);
-
-    const link =
-      document.createElement("a");
-
-    link.href = url;
-    link.download =
-      "fixit-tickets." + format;
-
+    const res = await request(path);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = Object.assign(document.createElement("a"), { href: url, download: filename });
     document.body.appendChild(link);
     link.click();
     link.remove();
-
-    URL.revokeObjectURL(url);
-
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    flash(`Descarga lista: ${filename}`);
   } catch (error) {
     flash(error.message, true);
   }
 }
 
-function bindEvents() {
-  const loginForm = $("#login-form");
-  const logoutButton = $("#logout");
-  const notifyButton = $("#notify");
-  const showRegisterButton = $("#show-register");
+/* ---------- UI helpers ---------- */
+function flash(message, error = false) {
+  const zone = $("#flash");
+  const item = document.createElement("div");
+  item.className = `flash${error ? " error" : ""}`;
+  item.setAttribute("role", error ? "alert" : "status");
+  item.textContent = message;
+  zone.appendChild(item);
+  setTimeout(() => item.remove(), error ? 7000 : 4000);
+}
 
-  if (!loginForm) {
-    console.error(
-      "FixIT: #login-form no existe."
-    );
+function setTitle(title, note = "") {
+  $("#page-title").textContent = title;
+  $("#page-note").textContent = note;
+  document.title = `${title} · FixIT`;
+}
+
+const fmtDate = (d) => d ? new Date(d).toLocaleString("es-PE", { dateStyle: "medium", timeStyle: "short" }) : "—";
+const fmtDay = (d) => d ? new Date(d).toLocaleDateString("es-PE", { day: "2-digit", month: "short" }) : "—";
+function fmtHours(h) {
+  if (h === null || h === undefined) return "—";
+  if (h < 1) return `${Math.round(h * 60)} min`;
+  if (h < 48) return `${h.toFixed(h < 10 ? 1 : 0)} h`;
+  return `${(h / 24).toFixed(1)} días`;
+}
+const pct = (v, d = 0) => (v === null || v === undefined) ? "—" : `${(v * 100).toFixed(d)} %`;
+
+function statePill(code) {
+  return `<span class="pill st-${esc(String(code).toLowerCase().replaceAll("_", "-"))}"><span class="dot"></span>${esc(STATE_LABEL[code] || code)}</span>`;
+}
+function prioBadge(code) {
+  return `<span class="prio"><i style="background:${PRIORITY_COLOR[code] || "var(--faint)"}"></i>${esc(PRIORITY_LABEL[code] || code || "—")}</span>`;
+}
+const synBadge = (flag) => flag ? '<span class="pill" title="Registro del conjunto de datos (prefijo SYN-)">Datos</span>' : "";
+function riskBadge(p) {
+  const level = p >= 0.6 ? "alto" : p >= 0.3 ? "medio" : "bajo";
+  const icon = { alto: "▲", medio: "●", bajo: "▼" }[level];
+  return `<span class="risk risk-${level}" title="Probabilidad estimada de incumplir el SLA"><span aria-hidden="true">${icon}</span>${pct(p)} · ${level}</span>`;
+}
+function slaLeft(ticket) {
+  if (!ticket.due_at || !OPEN_STATES.includes(ticket.state)) return "";
+  const hours = (new Date(ticket.due_at) - Date.now()) / 3600000;
+  return hours < 0 ? `<span class="risk risk-alto">Vencido hace ${fmtHours(-hours)}</span>`
+    : `<span class="risk ${hours < 4 ? "risk-medio" : "risk-bajo"}">Vence en ${fmtHours(hours)}</span>`;
+}
+const empty = (title, text = "") => `<div class="empty"><strong>${esc(title)}</strong>${text ? `<span>${esc(text)}</span>` : ""}</div>`;
+const loadingHtml = (text = "Cargando…") => `<div class="loading"><span class="spinner"></span>${esc(text)}</div>`;
+const option = (value, label, selected = false) => `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+
+function busy(button, on, text) {
+  if (!button) return;
+  if (on) {
+    button.dataset.label = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = `<span class="spinner"></span> ${esc(text || "Procesando…")}`;
+  } else {
+    button.disabled = false;
+    if (button.dataset.label) button.innerHTML = button.dataset.label;
+  }
+}
+
+async function loadCatalogs(force = false) {
+  if (!force && App.catalogs.areas) return App.catalogs;
+  const [areas, categories, priorities, specialties] = await Promise.all(["areas", "categories", "priorities", "specialties"].map((k) => api(`/catalogs/${k}`)));
+  App.catalogs = { areas, categories, priorities, specialties };
+  return App.catalogs;
+}
+
+/* ---------- Navigation ---------- */
+function navItems() {
+  const role = App.me.role;
+  const groups = [{ title: "Operación", items: [["dashboard", "Panel", "▦"], ["tickets", role === "TECNICO" ? "Mis tickets" : role === "USUARIO" ? "Mis solicitudes" : "Tickets", "▤"]] }];
+  if (role === "USUARIO") groups[0].items.push(["newticket", "Nueva solicitud", "＋"]);
+  groups[0].items.push(["assistant", "Asistente", "✦"], ["notifications", "Notificaciones", "◉"]);
+  if (isSupervisor()) groups.push({ title: "Inteligencia artificial", items: [["ia", "Centro de IA", "◈"]] });
+  const manage = [];
+  if (role === "ADMIN") manage.push(["admin", "Usuarios y catálogos", "⚙"], ["settings", "Reglas de asignación", "⚖"]);
+  if (isSupervisor()) manage.push(["audit", "Auditoría", "◷"], ["reports", "Reportes", "⇩"]);
+  if (manage.length) groups.push({ title: "Gestión", items: manage });
+  return groups;
+}
+
+function renderNav() {
+  $("#nav").innerHTML = navItems().map((g) => `<div class="nav-group">${esc(g.title)}</div>` +
+    g.items.map(([id, name, icon]) => `<button type="button" data-page="${id}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${esc(name)}</span></button>`).join("")).join("");
+  $("#identity").innerHTML = `<b>${esc(App.me.full_name)}</b><small>${esc(ROLE_LABEL[App.me.role] || App.me.role)}</small>`;
+}
+
+function allowedPages() {
+  return new Set(navItems().flatMap((g) => g.items.map((i) => i[0])));
+}
+
+function go(page, sub = "") {
+  const target = `#/${page}${sub ? "/" + sub : ""}`;
+  if (location.hash === target) route();
+  else location.hash = target;
+}
+
+async function route() {
+  if (!App.me) return;
+  const [, page = "dashboard", sub = ""] = location.hash.split("/");
+  const allowed = allowedPages();
+  const name = allowed.has(page) && Pages[page] ? page : "dashboard";
+  App.page = name;
+  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
+  $("#app").classList.remove("menu-open");
+  const content = $("#content");
+  content.innerHTML = loadingHtml();
+  try {
+    await Pages[name](content, sub);
+    Charts.mountAll(content);
+  } catch (error) {
+    console.error(error);
+    content.innerHTML = `<div class="banner banner-crit"><span class="ico">⚠</span><div><b>No se pudo cargar esta sección</b>${esc(error.message)}</div></div>`;
+  }
+}
+
+function showLogin() {
+  $("#login").hidden = false;
+  $("#app").hidden = true;
+}
+
+async function startSession() {
+  App.me = await api("/auth/me");
+  $("#login").hidden = true;
+  $("#app").hidden = false;
+  renderNav();
+  refreshUnread();
+  if (!location.hash || location.hash === "#") location.hash = "#/dashboard";
+  else route();
+}
+
+async function refreshUnread() {
+  try {
+    const rows = await api("/notifications");
+    const count = rows.filter((n) => !n.read).length;
+    const badge = $("#unread");
+    badge.hidden = !count;
+    badge.textContent = count > 99 ? "99+" : String(count);
+  } catch { /* non critical */ }
+}
+
+/* ---------- Dashboard ---------- */
+function kpi(label, value, note = "", tone = "") {
+  return `<article class="kpi ${tone ? "tone-" + tone : ""}"><span>${esc(label)}</span><strong class="num">${esc(value)}</strong>${note ? `<small>${esc(note)}</small>` : ""}</article>`;
+}
+
+Pages.dashboard = async (root) => {
+  const role = App.me.role;
+  const d = await api("/dashboard");
+  const c = d.counts || {};
+  const openTotal = OPEN_STATES.reduce((s, k) => s + (c[k] || 0), 0);
+  if (role === "USUARIO") {
+    setTitle(`Hola, ${App.me.full_name.split(" ")[0]}`, "Aquí puedes ver el estado de tus solicitudes");
+    const { data: mine } = await apiWithTotal("/tickets?limit=6");
+    root.innerHTML = `
+      <section class="hero"><div><h2>¿Tienes un problema con tu equipo o sistema?</h2><p>Cuéntanos qué pasa y te asignaremos un técnico especializado. Podrás seguir el avance desde aquí.</p></div>
+        <button class="btn" data-page-link="newticket">＋ Nueva solicitud</button></section>
+      <section class="kpis">${kpi("Solicitudes abiertas", openTotal, "En proceso")}${kpi("Esperando tu confirmación", c.RESUELTO || 0, "Revisa la solución", c.RESUELTO ? "warn" : "")}
+        ${kpi("Cerradas", c.CERRADO || 0, "Solucionadas")}${kpi("Satisfacción del servicio", d.satisfaction ? `${d.satisfaction}/5` : "—", "Promedio de todos los usuarios")}</section>
+      <section class="card"><div class="card-head"><div><h2>Mis solicitudes recientes</h2><p>Toca una solicitud para ver el detalle, comentar o calificar.</p></div>
+        <button class="btn btn-secondary btn-sm" data-page-link="tickets">Ver todas</button></div>${ticketList(mine)}</section>`;
     return;
   }
-
-  loginForm.addEventListener(
-    "submit",
-    async (e) => {
-      e.preventDefault();
-
-      const submitButton =
-        loginForm.querySelector(
-          'button[type="submit"], button:not([type])'
-        );
-
-      if (submitButton) {
-        submitButton.disabled = true;
-      }
-
-      const email =
-        $("#email")?.value.trim() || "";
-
-      const password =
-        $("#password")?.value || "";
-
-      if (!email || !password) {
-        flash(
-          "Ingrese correo y contraseña.",
-          true
-        );
-
-        if (submitButton) {
-          submitButton.disabled = false;
-        }
-
-        return;
-      }
-
-      try {
-        console.log(
-          "FixIT: intentando iniciar sesión..."
-        );
-
-        const result =
-          await api("/auth/login", {
-            method: "POST",
-            body: JSON.stringify({
-              email,
-              password
-            })
-          });
-
-        console.log(
-          "FixIT: login API correcto."
-        );
-
-        if (!result?.access_token) {
-          throw new Error(
-            "El servidor no devolvió un access token."
-          );
-        }
-
-        // Guardar el token antes de cualquier petición protegida.
-        localStorage.setItem(
-          "fixitToken",
-          result.access_token
-        );
-
-        if (result.refresh_token) {
-          localStorage.setItem(
-            "fixitRefresh",
-            result.refresh_token
-          );
-        } else {
-          localStorage.removeItem(
-            "fixitRefresh"
-          );
-        }
-
-        // Verificar identidad con el nuevo token.
-        me = await api("/auth/me");
-
-        console.log(
-          "FixIT: sesión verificada.",
-          me
-        );
-
-        if (!me?.id) {
-          throw new Error(
-            "El servidor no devolvió información de usuario válida."
-          );
-        }
-
-        // MUY IMPORTANTE:
-        // Mostrar la aplicación ANTES de cargar el dashboard.
-        // Así, si dashboard falla, el usuario permanece autenticado.
-        showApp();
-        setIdentity();
-        nav();
-
-        flash(
-          `Bienvenido, ${me.full_name}`
-        );
-
-        // Las cargas posteriores no invalidan la sesión.
-        try {
-          await noticeCount();
-        } catch (error) {
-          console.warn(
-            "No se pudo cargar notificaciones:",
-            error
-          );
-        }
-
-        try {
-          await dashboard();
-        } catch (error) {
-          console.error(
-            "Error al cargar dashboard:",
-            error
-          );
-
-          flash(
-            "Sesión iniciada. El dashboard tuvo un problema al cargar.",
-            true
-          );
-        }
-
-      } catch (error) {
-        console.error(
-          "FixIT: error durante login:",
-          error
-        );
-
-        clearSession();
-        showLogin();
-
-        if (error.status === 401) {
-          flash(
-            "Correo o contraseña incorrectos.",
-            true
-          );
-        } else {
-          flash(
-            error.message ||
-              "No fue posible iniciar sesión.",
-            true
-          );
-        }
-
-      } finally {
-        if (submitButton) {
-          submitButton.disabled = false;
-        }
-      }
-    }
-  );
-
-  if (logoutButton) {
-    logoutButton.onclick = logout;
+  if (role === "TECNICO") {
+    setTitle("Mi panel", "Tu cola de trabajo y desempeño");
+    const { data: queue } = await apiWithTotal("/tickets?limit=200");
+    const pending = queue.filter((t) => OPEN_STATES.includes(t.state)).sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
+    const perf = d.technician_performance?.[0];
+    root.innerHTML = `
+      <section class="kpis">${kpi("Por aceptar", c.ASIGNADO || 0, "Asignados a ti", c.ASIGNADO ? "warn" : "")}${kpi("En atención", c.EN_ATENCION || 0)}
+        ${kpi("En espera", c.EN_ESPERA || 0)}${kpi("Vencidos", d.overdue, "Fuera de SLA", d.overdue ? "crit" : "good")}
+        ${kpi("Resueltos", (c.RESUELTO || 0) + (c.CERRADO || 0))}${kpi("Resolución media", fmtHours(d.avg_resolution_hours))}</section>
+      <section class="card"><div class="card-head"><div><h2>Mi cola por vencimiento</h2><p>Los tickets más urgentes aparecen primero.</p></div></div>
+        ${pending.length ? ticketTable(pending.slice(0, 15), { showSla: true }) : empty("No tienes tickets pendientes", "¡Buen trabajo!")}</section>
+      ${perf ? `<section class="card"><div class="card-head"><h2>Mi desempeño</h2></div><div class="kpis">${kpi("Asignados", perf.assigned)}${kpi("Resueltos", perf.resolved)}${kpi("Calificación", perf.rating ? `${perf.rating}/5` : "—")}</div></section>` : ""}`;
+    return;
   }
+  setTitle("Panel de control", "Visión general de la operación de soporte");
+  const trendDays = Object.entries(d.trend || {});
+  const monthly = Object.entries(d.trend_monthly || {});
+  const total = d.total || 1;
+  root.innerHTML = `
+    <section class="kpis">${kpi("Tickets totales", d.total.toLocaleString("es-PE"))}${kpi("Abiertos", openTotal.toLocaleString("es-PE"), "Nuevos, asignados o en curso")}
+      ${kpi("Vencidos", d.overdue, "Abiertos fuera de SLA", d.overdue ? "crit" : "good")}${kpi("Alta / crítica", d.critical.toLocaleString("es-PE"), "Prioridad elevada")}
+      ${kpi("Primera atención", fmtHours(d.avg_attention_hours), "Promedio")}${kpi("Resolución", fmtHours(d.avg_resolution_hours), "Promedio")}
+      ${kpi("Satisfacción", d.satisfaction ? `${d.satisfaction}/5` : "—", "Calificación media")}</section>
+    <section class="grid grid-2">
+      <article class="card"><div class="card-head"><div><h3>Tickets creados · últimos 30 días</h3><p>Volumen diario</p></div></div>
+        ${Charts.columns({ items: trendDays.map(([k, v]) => ({ label: k, value: v, tip: `${fmtDay(k + "T12:00:00")}\n${v} tickets` })), xLabel: (k) => k.slice(8) + "/" + k.slice(5, 7), height: 220, label: "Tickets por día" })}
+        ${Charts.dataTable(["Día", "Tickets"], trendDays)}</article>
+      <article class="card"><div class="card-head"><div><h3>Tendencia mensual · 12 meses</h3><p>Tickets creados por mes (el mes en curso está incompleto)</p></div></div>
+        ${Charts.line({ labels: monthly.map(([k]) => k), series: [{ name: "Tickets", color: "var(--c1)", values: monthly.map(([, v]) => v) }], height: 220, format: (v) => Charts.fmtNum(v), label: "Tickets por mes" })}
+        ${Charts.dataTable(["Mes", "Tickets"], monthly)}</article>
+    </section>
+    <section class="grid grid-3">
+      <article class="card"><div class="card-head"><h3>Por estado</h3></div>${Charts.hbars(Object.entries(d.by_state || {}).map(([k, v]) => ({ label: STATE_LABEL[k] || k, value: v, display: v.toLocaleString("es-PE"), tip: `${STATE_LABEL[k] || k}\n${v} (${pct(v / total, 1)})` })))}</article>
+      <article class="card"><div class="card-head"><h3>Por prioridad</h3></div>${Charts.hbars(["BAJA", "MEDIA", "ALTA", "CRITICA"].filter((k) => d.by_priority?.[k] !== undefined).map((k) => ({ label: PRIORITY_LABEL[k], value: d.by_priority[k], color: PRIORITY_COLOR[k], display: d.by_priority[k].toLocaleString("es-PE") })))}</article>
+      <article class="card"><div class="card-head"><h3>Por área</h3></div>${Charts.hbars(Object.entries(d.by_area || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: k, value: v, display: v.toLocaleString("es-PE") })))}</article>
+    </section>
+    <section class="grid grid-2">
+      <article class="card"><div class="card-head"><h3>Por categoría</h3></div>${Charts.hbars(Object.entries(d.by_category || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => ({ label: k, value: v, display: v.toLocaleString("es-PE") })))}</article>
+      <article class="card"><div class="card-head"><div><h3>Rendimiento de técnicos</h3><p>Tickets asignados, resueltos y calificación</p></div></div>
+        ${(d.technician_performance || []).length ? `<div class="table-wrap"><table class="table-compact"><thead><tr><th>Técnico</th><th>Asignados</th><th>Resueltos</th><th>Calificación</th></tr></thead><tbody>
+        ${d.technician_performance.sort((a, b) => b.assigned - a.assigned).map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${p.assigned}</td><td class="num">${p.resolved}</td><td class="num">${p.rating ? p.rating + "/5" : "—"}</td></tr>`).join("")}</tbody></table></div>` : empty("Sin técnicos registrados")}
+      </article>
+    </section>
+    <section class="banner banner-info"><span class="ico">◈</span><div><b>Centro de Inteligencia Artificial</b>Predicciones de tiempos, riesgo de SLA, recomendaciones de técnicos y proyección de demanda.
+      <div style="margin-top:8px"><button class="btn btn-primary btn-sm" data-page-link="ia">Abrir Centro de IA</button></div></div></section>`;
+};
 
-  if (notifyButton) {
-    notifyButton.onclick = () =>
-      go("notifications");
-  }
+function ticketList(rows) {
+  if (!rows.length) return empty("Aún no tienes solicitudes", "Cuando registres una solicitud aparecerá aquí.");
+  return `<div class="list">${rows.map((t) => `<div class="list-item clickable" data-action="open-ticket" data-id="${esc(t.id)}" role="button" tabindex="0">
+    <div><strong>${esc(t.title)}</strong><div class="small muted">${esc(t.number)} · ${fmtDate(t.created_at)} · ${esc(t.technician?.name || "Buscando técnico")}</div></div>
+    <div class="row">${statePill(t.state)}</div></div>`).join("")}</div>`;
+}
 
-  if (showRegisterButton) {
-    showRegisterButton.onclick = () => {
-      modal.showModal();
+function ticketTable(rows, opts = {}) {
+  if (!rows.length) return empty("No hay tickets con estos filtros");
+  return `<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Solicitud</th><th>Estado</th><th>Prioridad</th>${opts.showSla ? "<th>SLA</th>" : ""}<th>Técnico</th><th>Creado</th></tr></thead><tbody>
+    ${rows.map((t) => `<tr class="clickable" data-action="open-ticket" data-id="${esc(t.id)}" tabindex="0"><td><strong class="mono">${esc(t.number)}</strong></td>
+      <td><strong>${esc(t.title)}</strong><span class="sub">${esc(t.category?.name || "")} · ${esc(t.area?.name || "")}</span></td><td>${statePill(t.state)}</td><td>${prioBadge(t.priority?.code)}</td>
+      ${opts.showSla ? `<td>${slaLeft(t)}</td>` : ""}<td>${esc(t.technician?.name || "Sin asignar")}</td><td class="small">${fmtDate(t.created_at)}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
 
-      $("#modal-content").innerHTML = `
-        <h2>Crear cuenta de solicitante</h2>
+/* ---------- Tickets ---------- */
+const ticketFilters = { q: "", state_code: "", priority_code: "", category_id: "", source: "all", offset: 0, limit: 25 };
 
-        <form id="register-form">
+Pages.tickets = async (root) => {
+  const role = App.me.role;
+  setTitle(role === "TECNICO" ? "Mis tickets" : role === "USUARIO" ? "Mis solicitudes" : "Tickets", "Busca, filtra y abre cualquier ticket para gestionarlo");
+  const cats = await loadCatalogs();
+  root.innerHTML = `
+    <section class="card"><form id="ticket-filters" class="toolbar">
+      <label class="search">Buscar<input name="q" placeholder="Número o título" value="${esc(ticketFilters.q)}"></label>
+      <label>Estado<select name="state_code"><option value="">Todos</option>${Object.entries(STATE_LABEL).map(([k, v]) => option(k, v, ticketFilters.state_code === k)).join("")}</select></label>
+      <label>Prioridad<select name="priority_code"><option value="">Todas</option>${cats.priorities.map((p) => option(p.code, p.name, ticketFilters.priority_code === p.code)).join("")}</select></label>
+      <label>Categoría<select name="category_id"><option value="">Todas</option>${cats.categories.map((c) => option(c.id, c.name, ticketFilters.category_id === c.id)).join("")}</select></label>
+      ${isSupervisor() ? `<label>Datos<select name="source">${option("all", "Todos", ticketFilters.source === "all")}${option("real", "Sin prefijo SYN-", ticketFilters.source === "real")}${option("synthetic", "Prefijo SYN-", ticketFilters.source === "synthetic")}</select></label>` : ""}
+      <button class="btn btn-primary" type="submit">Aplicar</button>
+      ${role === "USUARIO" ? '<button class="btn btn-secondary" type="button" data-page-link="newticket">＋ Nueva solicitud</button>' : ""}
+    </form></section>
+    <section id="ticket-results">${loadingHtml()}</section>`;
+  $("#ticket-filters").onsubmit = (e) => {
+    e.preventDefault();
+    Object.assign(ticketFilters, Object.fromEntries(new FormData(e.target)), { offset: 0 });
+    loadTicketResults();
+  };
+  await loadTicketResults();
+};
 
-          <label>
-            Nombre completo
-
-            <input
-              name="full_name"
-              required
-            >
-          </label>
-
-          <label>
-            Correo institucional
-
-            <input
-              name="email"
-              type="email"
-              required
-            >
-          </label>
-
-          <label>
-            Contraseña
-
-            <input
-              name="password"
-              type="password"
-              minlength="8"
-              required
-            >
-          </label>
-
-          <button type="submit">
-            Crear cuenta
-          </button>
-
-        </form>
-      `;
-
-      $("#register-form").onsubmit =
-        async (e) => {
-          e.preventDefault();
-
-          try {
-            await api("/auth/register", {
-              method: "POST",
-              body: JSON.stringify(
-                Object.fromEntries(
-                  new FormData(e.target)
-                )
-              )
-            });
-
-            modal.close();
-
-            flash(
-              "Cuenta creada. Ya puede iniciar sesión."
-            );
-          } catch (error) {
-            flash(
-              error.message,
-              true
-            );
-          }
-        };
-    }
-  }
-
-  const content = $("#content");
-
-  if (content) {
-    content.addEventListener("click", (e) => {
-      const row =
-        e.target.closest(".ticket-row");
-
-      if (!row) return;
-
-      const id =
-        row.dataset.ticketId;
-
-      if (id) {
-        openTicket(id);
-      }
-    });
+async function loadTicketResults() {
+  const box = $("#ticket-results");
+  if (!box) return;
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(ticketFilters)) if (v !== "" && v !== null && !(k === "source" && v === "all")) params.set(k, v);
+  box.innerHTML = loadingHtml();
+  try {
+    const { data, total } = await apiWithTotal(`/tickets?${params}`);
+    const from = total ? ticketFilters.offset + 1 : 0, to = ticketFilters.offset + data.length;
+    box.innerHTML = `${ticketTable(data, { showSla: App.me.role !== "USUARIO" })}
+      <div class="pager"><span class="muted small">${from}–${to} de ${total.toLocaleString("es-PE")}</span>
+        <button class="btn btn-secondary btn-sm" data-action="ticket-page" data-dir="-1" ${ticketFilters.offset <= 0 ? "disabled" : ""}>← Anterior</button>
+        <button class="btn btn-secondary btn-sm" data-action="ticket-page" data-dir="1" ${to >= total ? "disabled" : ""}>Siguiente →</button></div>`;
+  } catch (error) {
+    box.innerHTML = `<div class="banner banner-crit"><span class="ico">⚠</span><div>${esc(error.message)}</div></div>`;
   }
 }
 
-function startApp() {
-  // La aplicación siempre comienza mostrando una vista válida.
+Actions["ticket-page"] = (el) => {
+  ticketFilters.offset = Math.max(0, ticketFilters.offset + Number(el.dataset.dir) * ticketFilters.limit);
+  loadTicketResults();
+};
+
+Pages.newticket = async (root) => {
+  setTitle("Nueva solicitud", "Describe el problema con tus palabras; nosotros nos encargamos del resto");
+  const cats = await loadCatalogs();
+  root.innerHTML = `
+    <section class="card" style="max-width:860px"><div class="card-head"><div><span class="eyebrow">Paso único</span><h2>¿Qué está pasando?</h2>
+      <p>Cuanto más claro sea el detalle, más rápido podremos ayudarte.</p></div></div>
+      <form id="ticket-form">
+        <label>Resumen del problema<input name="title" required minlength="5" maxlength="180" placeholder="Ej.: La impresora del piso 2 no imprime"></label>
+        <label>Detalle<textarea name="description" required minlength="10" maxlength="8000" placeholder="¿Qué intentabas hacer? ¿Qué mensaje aparece? ¿Desde cuándo ocurre? ¿Afecta a más personas?"></textarea>
+          <span class="hint">No incluyas contraseñas.</span></label>
+        <div class="form-grid">
+          <label>Tu área<select name="area_id" required>${cats.areas.filter((a) => a.active).map((a) => option(a.id, a.name, a.id === App.me.area_id)).join("")}</select></label>
+          <label>Tipo de problema<select name="category_id" required>${cats.categories.filter((c) => c.active).map((c) => option(c.id, c.name)).join("")}</select></label>
+          <label class="full">¿Qué tan urgente es?<select name="priority_id">${option("", "No estoy seguro (la definirá el sistema)")}${cats.priorities.map((p) => option(p.id, `${p.name} — atención en máximo ${p.sla_hours} h`)).join("")}</select>
+            <span class="hint">Crítica: el trabajo está detenido para varias personas. Baja: es una molestia menor.</span></label>
+        </div>
+        <div class="row-between"><span class="muted small">Recibirás notificaciones cuando cambie el estado.</span><button class="btn btn-primary" type="submit">Enviar solicitud</button></div>
+      </form></section>`;
+  $("#ticket-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = e.submitter;
+    const data = Object.fromEntries(new FormData(e.target));
+    if (!data.priority_id) delete data.priority_id;
+    busy(btn, true, "Enviando…");
+    try {
+      const result = await post("/tickets", data);
+      flash(`Solicitud ${result.number} registrada${result.assigned ? " y asignada a un técnico." : ". Un supervisor la asignará pronto."}`);
+      go("tickets");
+    } catch (error) {
+      flash(error.message, true);
+    } finally { busy(btn, false); }
+  };
+};
+
+/* ---------- Ticket detail ---------- */
+async function openTicket(id) {
+  modal.showModal();
+  $("#modal-content").innerHTML = loadingHtml("Cargando ticket…");
+  try {
+    const t = await api(`/tickets/${id}`);
+    renderTicket(t);
+  } catch (error) {
+    $("#modal-content").innerHTML = `<div class="modal-head"><h2>No se pudo abrir el ticket</h2><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">✕</button></div><div class="modal-body">${esc(error.message)}</div>`;
+  }
+}
+Actions["open-ticket"] = (el) => openTicket(el.dataset.id);
+Actions["close-modal"] = () => modal.close();
+
+function ticketActions(t) {
+  const role = App.me.role;
+  const isReq = t.requester?.id === App.me.id;
+  const isTech = t.technician && t.technician.id === App.me.technician_id;
+  const b = [];
+  const btn = (action, label, cls = "btn-secondary", extra = "") => `<button class="btn ${cls}" data-action="${action}" data-id="${esc(t.id)}" ${extra}>${label}</button>`;
+  if (role === "TECNICO" && isTech) {
+    if (t.state === "ASIGNADO") b.push(btn("ticket-accept", "Aceptar e iniciar", "btn-primary"));
+    if (t.state === "EN_ATENCION") b.push(btn("ticket-resolve-form", "Registrar solución", "btn-good"), btn("ticket-transition", "Poner en espera", "btn-secondary", 'data-state="EN_ESPERA"'), btn("ticket-transition", "Escalar", "btn-secondary", 'data-state="ESCALADO"'));
+    if (["EN_ESPERA", "REABIERTO", "ESCALADO"].includes(t.state)) b.push(btn("ticket-transition", "Retomar atención", "btn-primary", 'data-state="EN_ATENCION"'));
+  }
+  if ((isReq || isSupervisor()) && t.state === "RESUELTO") b.push(btn("ticket-transition", "Confirmar y cerrar", "btn-good", 'data-state="CERRADO"'), btn("ticket-transition", "No se resolvió: reabrir", "btn-secondary", 'data-state="REABIERTO"'));
+  if (isReq && role === "USUARIO" && ["RESUELTO", "CERRADO"].includes(t.state) && !t.rating) b.push(btn("ticket-rate-form", "Calificar atención", "btn-primary"));
+  if (isSupervisor() && !["CERRADO", "CANCELADO", "RESUELTO"].includes(t.state)) b.push(btn("ticket-assign-form", t.technician ? "Reasignar" : "Asignar técnico", "btn-primary"));
+  if (isSupervisor() && ["NUEVO", "ASIGNADO", "EN_ESPERA", "REABIERTO", "ESCALADO"].includes(t.state)) b.push(btn("ticket-cancel", "Cancelar ticket", "btn-danger"));
+  return b.join("");
+}
+
+function renderTicket(t) {
+  const canSuggest = ["ADMIN", "JEFE_TI", "TECNICO"].includes(App.me.role);
+  $("#modal-content").innerHTML = `
+    <div class="modal-head"><div><span class="eyebrow">Ticket ${esc(t.number)}</span><h2>${esc(t.title)}</h2>
+      <div class="row" style="margin-top:6px">${statePill(t.state)} ${prioBadge(t.priority?.code)} ${synBadge(t.synthetic)} ${slaLeft(t)}</div></div>
+      <button class="icon-btn" data-action="close-modal" aria-label="Cerrar">✕</button></div>
+    <div class="modal-body">
+      <div class="summary-grid">
+        <div><span>Solicitante</span><strong>${esc(t.requester?.full_name)}</strong></div>
+        <div><span>Técnico</span><strong>${esc(t.technician?.name || "Sin asignar")}</strong></div>
+        <div><span>Categoría</span><strong>${esc(t.category?.name)}</strong></div>
+        <div><span>Área</span><strong>${esc(t.area?.name)}</strong></div>
+        <div><span>Creado</span><strong>${fmtDate(t.created_at)}</strong></div>
+        <div><span>Vence (SLA)</span><strong>${fmtDate(t.due_at)}</strong></div>
+        ${t.resolved_at ? `<div><span>Resuelto</span><strong>${fmtDate(t.resolved_at)}</strong></div>` : ""}
+        ${t.rating ? `<div><span>Calificación</span><strong>${"★".repeat(t.rating)}${"☆".repeat(5 - t.rating)}</strong></div>` : ""}
+      </div>
+      <div><div class="section-title">Descripción</div><div class="description">${esc(t.description)}</div></div>
+      ${(t.diagnosis || t.solution) ? `<div class="grid grid-2"><div class="subpanel"><b>Diagnóstico</b><span>${esc(t.diagnosis || "Pendiente")}</span></div><div class="subpanel"><b>Solución</b><span>${esc(t.solution || "Pendiente")}</span></div></div>` : ""}
+      <div class="actions">${ticketActions(t)}</div>
+      <div id="ticket-panel"></div>
+      <div class="subpanel"><div class="row-between"><div class="section-title">✦ Ayuda de IA</div><span class="muted small">Las respuestas del asistente requieren un proveedor LLM configurado</span></div>
+        <div class="actions"><button class="btn btn-secondary btn-sm" data-action="ai-summary" data-id="${esc(t.id)}">Resumir ticket</button>
+          ${canSuggest ? `<button class="btn btn-secondary btn-sm" data-action="ai-suggest" data-id="${esc(t.id)}">Sugerir diagnóstico</button>` : ""}
+          ${isSupervisor() ? `<button class="btn btn-secondary btn-sm" data-action="ml-ticket" data-id="${esc(t.id)}">Predicción ML</button>` : ""}</div>
+        <div id="ai-output"></div></div>
+      <div><div class="section-title">Comentarios <span class="pill">${(t.comments || []).length}</span></div>
+        <div class="stack" style="margin-top:8px">${(t.comments || []).map((c) => `<div class="comment ${c.internal ? "internal" : ""}"><div class="row-between"><strong>${esc(c.author)}</strong><span class="small muted">${fmtDate(c.created_at)}${c.internal ? " · nota interna" : ""}</span></div><div>${esc(c.body)}</div></div>`).join("") || '<p class="muted">Sin comentarios todavía.</p>'}</div>
+        ${["CERRADO", "CANCELADO"].includes(t.state) ? "" : `<form id="comment-form" class="stack" style="margin-top:10px"><textarea name="body" required maxlength="5000" placeholder="Escribe una actualización o pregunta"></textarea>
+          <div class="row-between">${["ADMIN", "JEFE_TI", "TECNICO"].includes(App.me.role) ? '<label class="check"><input type="checkbox" name="internal"> Nota interna (no la ve el solicitante)</label>' : "<span></span>"}<button class="btn btn-primary btn-sm" type="submit">Comentar</button></div></form>`}</div>
+      <div><div class="section-title">Adjuntos <span class="pill">${(t.attachments || []).length}</span></div>
+        <div class="row" style="margin-top:8px">${(t.attachments || []).map((a) => `<button class="source-link" data-action="download-attachment" data-id="${esc(a.id)}" data-name="${esc(a.name)}">⇩ ${esc(a.name)}</button>`).join("") || '<span class="muted">Sin adjuntos.</span>'}</div>
+        ${["CERRADO", "CANCELADO"].includes(t.state) ? "" : `<form id="attachment-form" class="row" style="margin-top:10px"><input type="file" name="file" accept="image/png,image/jpeg,application/pdf,text/plain" required style="flex:1"><button class="btn btn-secondary btn-sm" type="submit">Subir evidencia</button></form>`}</div>
+      <div><div class="section-title">Historial</div><div class="timeline" style="margin-top:8px">${(t.history || []).map((h) => `<div class="timeline-item"><div><strong>${esc(h.detail)}</strong><div class="small muted">${esc(h.actor)} · ${fmtDate(h.created_at)}</div></div></div>`).join("") || '<p class="muted">Sin eventos.</p>'}</div></div>
+    </div>`;
+  const commentForm = $("#comment-form");
+  if (commentForm) commentForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    try {
+      await post(`/tickets/${t.id}/comments`, { body: form.get("body"), internal: form.get("internal") === "on" });
+      flash("Comentario agregado.");
+      openTicket(t.id);
+    } catch (error) { flash(error.message, true); }
+  };
+  const attachmentForm = $("#attachment-form");
+  if (attachmentForm) attachmentForm.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/tickets/${t.id}/attachments`, { method: "POST", body: new FormData(e.target) });
+      flash("Archivo adjuntado.");
+      openTicket(t.id);
+    } catch (error) { flash(error.message, true); }
+  };
+}
+
+async function afterTicketChange(id, message) {
+  flash(message);
+  await openTicket(id);
+  refreshUnread();
+  if (App.page === "tickets") loadTicketResults();
+}
+
+Actions["download-attachment"] = (el) => download(`/attachments/${el.dataset.id}`, el.dataset.name);
+Actions["ticket-accept"] = async (el) => {
+  busy(el, true);
+  try { await post(`/tickets/${el.dataset.id}/accept`); await afterTicketChange(el.dataset.id, "Ticket aceptado. ¡A trabajar!"); }
+  catch (error) { flash(error.message, true); busy(el, false); }
+};
+Actions["ticket-transition"] = async (el) => {
+  busy(el, true);
+  try { await post(`/tickets/${el.dataset.id}/transition`, { state: el.dataset.state }); await afterTicketChange(el.dataset.id, `Estado actualizado: ${STATE_LABEL[el.dataset.state]}.`); }
+  catch (error) { flash(error.message, true); busy(el, false); }
+};
+Actions["ticket-cancel"] = (el) => {
+  $("#ticket-panel").innerHTML = `<div class="subpanel"><b>¿Cancelar este ticket?</b><span class="muted">El ticket quedará cerrado como cancelado y no podrá reabrirse.</span>
+    <div class="actions"><button class="btn btn-danger btn-sm" data-action="ticket-transition" data-state="CANCELADO" data-id="${esc(el.dataset.id)}">Sí, cancelar</button>
+    <button class="btn btn-secondary btn-sm" data-action="clear-panel">No</button></div></div>`;
+};
+Actions["clear-panel"] = () => { $("#ticket-panel").innerHTML = ""; };
+Actions["ticket-resolve-form"] = (el) => {
+  const id = el.dataset.id;
+  $("#ticket-panel").innerHTML = `<form id="resolve-form" class="subpanel"><b>Registrar solución</b>
+    <label>Diagnóstico (causa del problema)<textarea name="diagnosis" maxlength="6000"></textarea></label>
+    <label>Solución aplicada<textarea name="solution" required maxlength="6000"></textarea></label>
+    <div class="actions"><button class="btn btn-good btn-sm" type="submit">Marcar como resuelto</button><button class="btn btn-secondary btn-sm" type="button" data-action="clear-panel">Cancelar</button></div></form>`;
+  $("#resolve-form").onsubmit = async (e) => {
+    e.preventDefault();
+    try { await post(`/tickets/${id}/transition`, { ...Object.fromEntries(new FormData(e.target)), state: "RESUELTO" }); await afterTicketChange(id, "Ticket resuelto. El solicitante confirmará la solución."); }
+    catch (error) { flash(error.message, true); }
+  };
+};
+Actions["ticket-rate-form"] = (el) => {
+  const id = el.dataset.id;
+  $("#ticket-panel").innerHTML = `<form id="rating-form" class="subpanel"><b>¿Cómo te atendimos?</b>
+    <label>Puntuación<select name="score">${[5, 4, 3, 2, 1].map((s) => option(s, `${"★".repeat(s)} ${["", "Muy mala", "Mala", "Regular", "Buena", "Excelente"][s]}`)).join("")}</select></label>
+    <label>¿Se solucionó tu problema?<select name="solved">${option("true", "Sí")}${option("false", "No")}</select></label>
+    <label>Comentario (opcional)<textarea name="comment" maxlength="2000"></textarea></label>
+    <div class="actions"><button class="btn btn-primary btn-sm" type="submit">Enviar calificación</button></div></form>`;
+  $("#rating-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    try { await post(`/tickets/${id}/rating`, { score: Number(data.score), solved: data.solved === "true", comment: data.comment || null }); await afterTicketChange(id, "¡Gracias por tu calificación!"); }
+    catch (error) { flash(error.message, true); }
+  };
+};
+Actions["ticket-assign-form"] = async (el) => {
+  const id = el.dataset.id;
+  const techs = await api("/technicians");
+  $("#ticket-panel").innerHTML = `<form id="assign-form" class="subpanel"><b>Asignar técnico</b>
+    <label>Técnico<select name="technician_id">${option("", "Automático (reglas de asignación)")}${techs.filter((x) => x.available).map((x) => option(x.id, `${x.name} · ${(x.specialties || []).join(", ") || "General"}`)).join("")}</select></label>
+    <label>Motivo (opcional)<input name="reason" maxlength="1000"></label>
+    <div id="assign-ml" class="small"></div>
+    <div class="actions"><button class="btn btn-primary btn-sm" type="submit">Guardar asignación</button>
+      <button class="btn btn-secondary btn-sm" type="button" data-action="assign-ml" data-id="${esc(id)}">Ver recomendación ML</button>
+      <button class="btn btn-secondary btn-sm" type="button" data-action="clear-panel">Cancelar</button></div></form>`;
+  $("#assign-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    if (!data.technician_id) delete data.technician_id;
+    if (!data.reason) delete data.reason;
+    try { await post(`/tickets/${id}/assign`, data); await afterTicketChange(id, "Asignación registrada."); }
+    catch (error) { flash(error.message, true); }
+  };
+};
+Actions["assign-ml"] = async (el) => {
+  const box = $("#assign-ml");
+  box.innerHTML = loadingHtml("Consultando modelo…");
+  try {
+    const p = await api(`/ml/tickets/${el.dataset.id}`);
+    if (!p.recommendations?.length) { box.innerHTML = '<p class="muted">El modelo no encontró técnicos disponibles compatibles.</p>'; return; }
+    box.innerHTML = `<div class="stack">${p.recommendations.map((r, i) => `<div class="row-between"><span><b>${i + 1}. ${esc(r.name)}</b> — ${esc(r.reason)}</span>
+      <button type="button" class="btn btn-secondary btn-sm" data-action="pick-tech" data-tech="${esc(r.technician_id)}" data-reason="${esc(`Recomendación ML (${p.model.version}): riesgo SLA ${pct(r.sla_risk)}, tiempo estimado ${r.predicted_hours} h`)}">Elegir</button></div>`).join("")}
+      </div>`;
+  } catch (error) {
+    box.innerHTML = `<p class="muted">${esc(error.message)}</p>`;
+  }
+};
+Actions["pick-tech"] = (el) => {
+  const form = $("#assign-form");
+  form.technician_id.value = el.dataset.tech;
+  form.reason.value = el.dataset.reason;
+  flash("Técnico seleccionado. Pulsa «Guardar asignación» para confirmar.");
+};
+
+function renderAiResult(box, result) {
+  const sources = (result.sources || []).map((s) => `<button class="source-link" data-action="open-ticket" data-id="${esc(s.id)}" title="${esc(s.solution || "")}">${esc(s.number)} · ${esc(s.title)}</button>`).join("");
+  box.innerHTML = `<div class="stack" style="margin-top:8px">
+    ${result.llm_used ? `<div class="ai-answer">${esc(result.answer)}</div><span class="small muted">Generado por ${esc(result.provider)} · ${esc(result.model)}. Verifica la información antes de actuar.</span>`
+      : `<div class="banner ${result.error ? "banner-crit" : "banner-warn"}"><span class="ico">ⓘ</span><div><b>${result.error ? "El LLM no respondió" : "LLM no configurado"}</b>${esc(result.notice)}</div></div>`}
+    ${result.notice && result.llm_used ? `<span class="small muted">${esc(result.notice)}</span>` : ""}
+    ${sources ? `<div><span class="small muted">Tickets similares encontrados en el historial (búsqueda local):</span><div class="row" style="margin-top:6px">${sources}</div></div>` : ""}</div>`;
+}
+
+Actions["ai-summary"] = async (el) => {
+  const box = $("#ai-output");
+  busy(el, true, "Resumiendo…");
+  try { renderAiResult(box, await post(`/llm/tickets/${el.dataset.id}/summary`)); }
+  catch (error) { box.innerHTML = `<p class="muted">${esc(error.message)}</p>`; }
+  finally { busy(el, false); }
+};
+Actions["ai-suggest"] = async (el) => {
+  const box = $("#ai-output");
+  busy(el, true, "Analizando…");
+  try { renderAiResult(box, await post(`/llm/tickets/${el.dataset.id}/suggestions`)); }
+  catch (error) { box.innerHTML = `<p class="muted">${esc(error.message)}</p>`; }
+  finally { busy(el, false); }
+};
+Actions["ml-ticket"] = async (el) => {
+  const box = $("#ai-output");
+  busy(el, true, "Calculando…");
+  try {
+    const p = await api(`/ml/tickets/${el.dataset.id}`);
+    box.innerHTML = `<div class="stack" style="margin-top:8px">
+      <div class="summary-grid"><div><span>Riesgo de incumplir SLA</span>${riskBadge(p.sla_risk)}</div><div><span>Tiempo total estimado</span><strong>${fmtHours(p.predicted_hours)}</strong></div>
+        <div><span>Resolución estimada</span><strong>${fmtDate(p.predicted_resolution_at)}</strong></div>
+        ${p.actual ? `<div><span>Resultado real</span><strong>${fmtHours(p.actual.hours)} · ${p.actual.sla_breached ? "incumplió SLA" : "cumplió SLA"}</strong></div>` : ""}</div>
+      ${p.actual?.in_training_data ? '<span class="small muted">Este ticket formó parte de los datos de entrenamiento: la comparación con el resultado real no es una validación.</span>' : ""}
+      <div><b class="small">Factores que más influyen</b><div>${factorChips(p.factors)}</div></div>
+      ${p.recommendations?.length ? `<div><b class="small">Técnicos recomendados</b><ol class="small">${p.recommendations.map((r) => `<li>${esc(r.name)} — ${esc(r.reason)}</li>`).join("")}</ol></div>` : ""}
+      <span class="small muted">Modelo ${esc(p.model.version)}</span></div>`;
+  } catch (error) {
+    box.innerHTML = `<div class="banner banner-warn"><span class="ico">ⓘ</span><div>${esc(error.message)}</div></div>`;
+  } finally { busy(el, false); }
+};
+
+function factorChips(factors) {
+  if (!factors?.length) return '<span class="muted small">Ningún factor se aparta de forma relevante del caso típico.</span>';
+  return factors.map((f) => `<span class="chip ${f.direction === "aumenta" ? "up" : "down"}" title="${f.direction === "aumenta" ? "Aumenta" : "Reduce"} el riesgo en ${Math.abs(f.impact * 100).toFixed(0)} puntos">${f.direction === "aumenta" ? "▲" : "▼"} ${esc(f.label)}</span>`).join("");
+}
+
+/* ---------- Notifications ---------- */
+Pages.notifications = async (root) => {
+  setTitle("Notificaciones", "Novedades de tus tickets");
+  const rows = await api("/notifications");
+  const unread = rows.filter((n) => !n.read);
+  root.innerHTML = `<section class="card"><div class="card-head"><div><h2>Centro de actividad</h2><p>${unread.length} sin leer</p></div>
+      ${unread.length ? '<button class="btn btn-secondary btn-sm" data-action="read-all">Marcar todas como leídas</button>' : ""}</div>
+    <div class="list">${rows.map((n) => `<div class="list-item ${n.read ? "" : "unread"}"><div><strong>${esc(n.title)}</strong><div>${esc(n.body)}</div><div class="small muted">${fmtDate(n.created_at)}</div></div>
+      <div class="row">${n.ticket_id ? `<button class="btn btn-secondary btn-sm" data-action="open-ticket" data-id="${esc(n.ticket_id)}">Ver ticket</button>` : ""}
+      ${n.read ? "" : `<button class="btn btn-link" data-action="read-one" data-id="${esc(n.id)}">Marcar leída</button>`}</div></div>`).join("") || empty("No tienes notificaciones")}</div></section>`;
+};
+Actions["read-one"] = async (el) => {
+  try { await api(`/notifications/${el.dataset.id}/read`, { method: "PATCH" }); refreshUnread(); route(); } catch (error) { flash(error.message, true); }
+};
+Actions["read-all"] = async (el) => {
+  busy(el, true);
+  try {
+    const rows = (await api("/notifications")).filter((n) => !n.read);
+    for (let i = 0; i < rows.length; i += 10) await Promise.all(rows.slice(i, i + 10).map((n) => api(`/notifications/${n.id}/read`, { method: "PATCH" })));
+    flash("Notificaciones marcadas como leídas.");
+    refreshUnread();
+    route();
+  } catch (error) { flash(error.message, true); busy(el, false); }
+};
+
+/* ---------- Assistant (shared with the AI hub) ---------- */
+const CHAT_PROMPTS = {
+  USUARIO: ["Mi computadora está muy lenta, ¿qué puedo revisar?", "¿Cómo va mi última solicitud?", "No puedo conectarme a la VPN"],
+  TECNICO: ["Impresora con cola de impresión bloqueada", "¿Qué tickets tengo vencidos?", "Soluciones previas para error de ERP al facturar"],
+  SUPERVISOR: ["¿Cuántos tickets críticos abiertos hay?", "Resume la situación de la cola actual", "Problemas más frecuentes con la VPN y cómo se resolvieron"],
+};
+
+function chatKey() { return `fixitChat:${App.me.id}`; }
+function chatHistory() {
+  try { return JSON.parse(sessionStorage.getItem(chatKey()) || "[]"); } catch { return []; }
+}
+function saveChat(items) {
+  try { sessionStorage.setItem(chatKey(), JSON.stringify(items.slice(-40))); } catch { /* storage unavailable */ }
+}
+
+async function renderAssistant(root) {
+  const status = await api("/llm/status").catch(() => ({ configured: false, message: "No se pudo consultar el estado del asistente." }));
+  const prompts = CHAT_PROMPTS[isSupervisor() ? "SUPERVISOR" : App.me.role];
+  root.innerHTML = `
+    ${status.configured ? `<div class="banner banner-info"><span class="ico">✦</span><div><b>Asistente conectado</b>Proveedor ${esc(status.provider)} · modelo ${esc(status.model)}. Usa el historial de tickets que puedes ver como contexto.</div></div>`
+      : `<div class="banner banner-warn"><span class="ico">ⓘ</span><div><b>El asistente LLM no está configurado</b>${esc(status.message || "")} Mientras tanto, la búsqueda en el historial funciona con normalidad y no se simulan respuestas.</div></div>`}
+    <section class="grid grid-2" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr)">
+      <article class="card chat"><div class="chat-log" id="chat-log"></div>
+        <form id="chat-form" class="chat-form"><textarea name="message" required minlength="2" maxlength="2000" placeholder="Escribe tu consulta sobre soporte técnico…"></textarea>
+          <div class="stack"><button class="btn btn-primary" type="submit">Enviar</button><button class="btn btn-secondary btn-sm" type="button" data-action="chat-clear">Limpiar</button></div></form></article>
+      <aside class="stack">
+        <div class="card"><div class="card-head"><h3>Prueba con</h3></div><div class="suggestions">${prompts.map((p) => `<button type="button" data-action="chat-prompt" data-text="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
+        <div class="card"><div class="card-head"><div><h3>Buscar en el historial</h3><p>Búsqueda local por similitud (no usa LLM).</p></div></div>
+          <form id="kb-search" class="row"><input name="q" required minlength="2" placeholder="Ej.: VPN no conecta" style="flex:1"><button class="btn btn-secondary" type="submit">Buscar</button></form>
+          <div id="kb-results" class="stack" style="margin-top:10px"></div></div>
+      </aside>
+    </section>`;
+  const log = $("#chat-log");
+  const draw = () => {
+    const items = chatHistory();
+    log.innerHTML = items.length ? items.map((m) => {
+      const sources = (m.sources || []).map((s) => `<button class="source-link" data-action="open-ticket" data-id="${esc(s.id)}">${esc(s.number)}</button>`).join("");
+      return `<div class="msg ${m.kind}">${esc(m.text)}${sources ? `<div class="sources"><span class="small muted">Tickets relacionados:</span>${sources}</div>` : ""}</div>`;
+    }).join("") : `<div class="empty"><strong>¿En qué puedo ayudarte?</strong><span>Pregunta sobre problemas técnicos, el estado de tus tickets o soluciones anteriores.</span></div>`;
+    log.scrollTop = log.scrollHeight;
+  };
+  draw();
+  const form = $("#chat-form");
+  form.message.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const message = form.message.value.trim();
+    if (message.length < 2) return;
+    const items = chatHistory();
+    const history = items.filter((m) => m.kind === "user" || m.kind === "bot").slice(-10).map((m) => ({ role: m.kind === "user" ? "user" : "assistant", content: m.text.slice(0, 6000) }));
+    items.push({ kind: "user", text: message });
+    saveChat(items);
+    draw();
+    form.message.value = "";
+    const btn = form.querySelector("button[type=submit]");
+    busy(btn, true, "Pensando…");
+    try {
+      const result = await post("/llm/chat", { message, history: history.filter((h, i) => !(i === 0 && h.role === "assistant")) });
+      const next = chatHistory();
+      if (result.llm_used) next.push({ kind: "bot", text: result.answer, sources: result.sources });
+      else next.push({ kind: "notice", text: result.notice, sources: result.sources });
+      saveChat(next);
+    } catch (error) {
+      const next = chatHistory();
+      next.push({ kind: "notice", text: `Error: ${error.message}` });
+      saveChat(next);
+    } finally {
+      busy(btn, false);
+      draw();
+    }
+  };
+  $("#kb-search").onsubmit = async (e) => {
+    e.preventDefault();
+    const box = $("#kb-results");
+    box.innerHTML = loadingHtml("Buscando…");
+    try {
+      const r = await api(`/llm/search?q=${encodeURIComponent(e.target.q.value)}`);
+      box.innerHTML = r.results.length ? r.results.map((s) => `<div class="list-item clickable" data-action="open-ticket" data-id="${esc(s.id)}" role="button" tabindex="0"><div>
+        <strong>${esc(s.number)} · ${esc(s.title)}</strong><div class="small muted">${esc(s.category)} · ${esc(STATE_LABEL[s.state] || s.state)}</div>
+        ${s.solution ? `<div class="small">Solución: ${esc(s.solution)}</div>` : ""}</div></div>`).join("") : empty("Sin coincidencias");
+    } catch (error) { box.innerHTML = `<p class="muted">${esc(error.message)}</p>`; }
+  };
+}
+Actions["chat-prompt"] = (el) => { const f = $("#chat-form"); f.message.value = el.dataset.text; f.requestSubmit(); };
+Actions["chat-clear"] = () => { saveChat([]); route(); };
+
+Pages.assistant = async (root) => {
+  setTitle("Asistente de soporte", "Consultas en lenguaje natural y búsqueda en el historial de tickets");
+  await renderAssistant(root);
+};
+
+/* ---------- Administration ---------- */
+Pages.admin = async (root) => {
+  setTitle("Usuarios y catálogos", "Gestiona cuentas, técnicos, áreas y categorías");
+  const cats = await loadCatalogs(true);
+  const [users, techs] = await Promise.all([api("/users"), api("/technicians")]);
+  const specIdByName = Object.fromEntries(cats.specialties.map((s) => [s.name, s.id]));
+  const candidates = users.filter((u) => u.role === "TECNICO" && !techs.some((t) => t.user_id === u.id));
+  const roleSelect = (u) => `<select data-action-change="user-role" data-id="${esc(u.id)}" aria-label="Rol de ${esc(u.full_name)}" ${u.id === App.me.id ? "disabled" : ""}>${Object.entries(ROLE_LABEL).map(([k, v]) => option(k, v, u.role === k)).join("")}</select>`;
+  root.innerHTML = `
+    <section class="kpis">${kpi("Usuarios", users.length)}${kpi("Activos", users.filter((u) => u.active).length)}${kpi("Técnicos", techs.length)}${kpi("Disponibles", techs.filter((t) => t.available).length)}</section>
+    <section class="grid grid-2">
+      <article class="card"><div class="card-head"><h3>Crear usuario</h3></div><form id="user-form" class="form-grid">
+        <label>Nombre completo<input name="full_name" required minlength="2"></label><label>Correo<input name="email" type="email" required></label>
+        <label>Contraseña inicial<input name="password" type="password" required minlength="8"></label>
+        <label>Rol<select name="role_code">${Object.entries(ROLE_LABEL).map(([k, v]) => option(k, v, k === "USUARIO")).join("")}</select></label>
+        <label class="full">Área<select name="area_id">${option("", "Sin área")}${cats.areas.map((a) => option(a.id, a.name)).join("")}</select></label>
+        <div class="full"><button class="btn btn-primary" type="submit">Crear usuario</button></div></form></article>
+      <article class="card"><div class="card-head"><h3>Agregar al catálogo</h3></div><form id="catalog-form" class="form-grid">
+        <label>Tipo<select name="kind">${option("areas", "Área")}${option("categories", "Categoría")}${option("specialties", "Especialidad")}</select></label>
+        <label>Nombre<input name="name" required minlength="2" maxlength="100"></label>
+        <label class="full">Descripción<input name="description" maxlength="1000"></label>
+        <label class="full">Especialidad requerida (solo categorías)<select name="specialty_id">${option("", "Ninguna")}${cats.specialties.map((s) => option(s.id, s.name)).join("")}</select></label>
+        <div class="full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></article>
+    </section>
+    <section class="card"><div class="card-head"><div><h3>Técnicos</h3><p>Disponibilidad, carga máxima y especialidades usadas por la asignación automática y por el recomendador ML.</p></div></div>
+      ${candidates.length ? `<form id="tech-form" class="toolbar" style="margin-bottom:14px"><label>Nuevo perfil técnico<select name="user_id">${candidates.map((u) => option(u.id, u.full_name)).join("")}</select></label>
+        <label>Carga máxima<input name="max_load" type="number" min="1" max="100" value="8"></label>
+        <label>Especialidades<select name="specialty_ids" multiple size="3">${cats.specialties.map((s) => option(s.id, s.name)).join("")}</select></label>
+        <button class="btn btn-primary" type="submit">Crear perfil</button></form>` : '<p class="muted small" style="margin-bottom:10px">Para crear un perfil técnico, primero crea un usuario con rol Técnico.</p>'}
+      <div class="table-wrap"><table class="table-compact"><thead><tr><th>Técnico</th><th>Especialidades</th><th>Carga máx.</th><th>Disponible</th><th></th></tr></thead><tbody>
+      ${techs.map((t) => `<tr data-tech-row="${esc(t.id)}" data-user="${esc(t.user_id)}"><td><strong>${esc(t.name)}</strong><span class="sub">${esc(t.email)}</span></td>
+        <td><select name="specialty_ids" multiple size="3" aria-label="Especialidades">${cats.specialties.map((s) => option(s.id, s.name, (t.specialties || []).map((n) => specIdByName[n]).includes(s.id))).join("")}</select></td>
+        <td><input name="max_load" type="number" min="1" max="100" value="${t.max_load}" style="width:80px"></td>
+        <td><label class="check"><input type="checkbox" name="available" ${t.available ? "checked" : ""}> Sí</label></td>
+        <td><button class="btn btn-secondary btn-sm" data-action="save-tech" data-id="${esc(t.id)}">Guardar</button></td></tr>`).join("") || `<tr><td colspan="5">${empty("Sin técnicos")}</td></tr>`}
+      </tbody></table></div></section>
+    <section class="card"><div class="card-head"><h3>Usuarios</h3><input id="user-filter" placeholder="Filtrar por nombre o correo" style="max-width:280px"></div>
+      <div class="table-wrap"><table class="table-compact"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody id="user-rows">
+      ${users.map((u) => `<tr data-filter="${esc((u.full_name + " " + u.email).toLowerCase())}"><td><strong>${esc(u.full_name)}</strong><span class="sub">${esc(u.email)}</span></td>
+        <td>${roleSelect(u)}</td><td>${u.active ? '<span class="pill pill-real">Activo</span>' : '<span class="pill st-cancelado">Inactivo</span>'}</td>
+        <td>${u.id === App.me.id ? '<span class="muted small">Tu cuenta</span>' : `<button class="btn btn-secondary btn-sm" data-action="toggle-user" data-id="${esc(u.id)}" data-active="${u.active}">${u.active ? "Desactivar" : "Activar"}</button>`}</td></tr>`).join("")}
+      </tbody></table></div></section>`;
+
+  $("#user-filter").oninput = (e) => { const q = e.target.value.toLowerCase(); $$("#user-rows tr").forEach((r) => { r.hidden = !r.dataset.filter.includes(q); }); };
+  $("#user-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    if (!data.area_id) delete data.area_id;
+    try { await post("/users", data); flash("Usuario creado."); route(); } catch (error) { flash(error.message, true); }
+  };
+  $("#catalog-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const kind = data.kind;
+    delete data.kind;
+    if (kind !== "categories" || !data.specialty_id) delete data.specialty_id;
+    if (!data.description) delete data.description;
+    try { await post(`/catalogs/${kind}`, data); flash("Elemento agregado al catálogo."); App.catalogs = {}; route(); } catch (error) { flash(error.message, true); }
+  };
+  const techForm = $("#tech-form");
+  if (techForm) techForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try { await post("/technicians", { user_id: f.get("user_id"), max_load: Number(f.get("max_load")), available: true, specialty_ids: f.getAll("specialty_ids") }); flash("Perfil técnico creado."); route(); }
+    catch (error) { flash(error.message, true); }
+  };
+};
+Actions["save-tech"] = async (el) => {
+  const row = el.closest("tr");
+  const payload = { user_id: row.dataset.user, max_load: Number(row.querySelector("[name=max_load]").value), available: row.querySelector("[name=available]").checked,
+    specialty_ids: [...row.querySelector("[name=specialty_ids]").selectedOptions].map((o) => o.value) };
+  busy(el, true, "Guardando");
+  try { await api(`/technicians/${el.dataset.id}`, { method: "PATCH", body: JSON.stringify(payload) }); flash("Técnico actualizado."); } catch (error) { flash(error.message, true); }
+  finally { busy(el, false); }
+};
+Actions["toggle-user"] = async (el) => {
+  const active = el.dataset.active !== "true";
+  try { await api(`/users/${el.dataset.id}`, { method: "PATCH", body: JSON.stringify({ active }) }); flash(active ? "Usuario activado." : "Usuario desactivado."); route(); }
+  catch (error) { flash(error.message, true); }
+};
+const ChangeActions = {
+  "user-role": async (el) => {
+    try { await api(`/users/${el.dataset.id}`, { method: "PATCH", body: JSON.stringify({ role_code: el.value }) }); flash(`Rol actualizado a ${ROLE_LABEL[el.value]}.`); }
+    catch (error) { flash(error.message, true); route(); }
+  },
+};
+
+/* ---------- Assignment rules ---------- */
+const WEIGHT_TEXT = {
+  "assignment.rating": ["Calificación de los usuarios", "Favorece a técnicos mejor valorados."],
+  "assignment.sla": ["Cumplimiento de SLA", "Favorece a quienes resuelven a tiempo."],
+  "assignment.speed": ["Rapidez", "Favorece tiempos de resolución cortos."],
+  "assignment.specialty": ["Especialidad", "Peso de tener la especialidad requerida."],
+  "assignment.resolved": ["Experiencia", "Favorece a técnicos con más tickets resueltos."],
+  "assignment.reopened": ["Penalización por reaperturas", "Resta puntos por tickets reabiertos."],
+  "assignment.load_penalty": ["Penalización por carga", "Resta puntos según los tickets abiertos del técnico."],
+};
+Pages.settings = async (root) => {
+  setTitle("Reglas de asignación", "Pesos del algoritmo que elige técnico automáticamente al crear un ticket");
+  const rows = await api("/settings");
+  const weights = rows.filter((s) => WEIGHT_TEXT[s.key]);
+  root.innerHTML = `<div class="banner banner-info"><span class="ico">ⓘ</span><div><b>¿Cómo funciona?</b>Cada técnico disponible y compatible recibe un puntaje ponderado. Valores entre 0 y 1; un valor mayor da más importancia al criterio.
+      Estas reglas son deterministas e independientes del recomendador de Machine Learning del Centro de IA.</div></div>
+    <form id="settings-form" class="card stack">${weights.map((s) => `<div class="row-between"><div><strong>${esc(WEIGHT_TEXT[s.key][0])}</strong><div class="small muted">${esc(WEIGHT_TEXT[s.key][1])} <span class="mono">${esc(s.key)}</span></div></div>
+      <input name="${esc(s.key)}" type="number" min="0" max="1" step="0.01" value="${esc(s.value)}" style="max-width:120px" required></div>`).join('<div class="divider"></div>')}
+      <div><button class="btn btn-primary" type="submit">Guardar cambios</button></div></form>`;
+  $("#settings-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = e.submitter;
+    busy(btn, true, "Guardando…");
+    try {
+      for (const [key, value] of new FormData(e.target)) await api(`/settings/${key}`, { method: "PUT", body: JSON.stringify({ value: String(value), description: WEIGHT_TEXT[key]?.[0] }) });
+      flash("Reglas actualizadas.");
+    } catch (error) { flash(error.message, true); } finally { busy(btn, false); }
+  };
+};
+
+/* ---------- Audit & reports ---------- */
+Pages.audit = async (root) => {
+  setTitle("Auditoría", "Últimas 500 operaciones registradas");
+  const rows = await api("/audit");
+  root.innerHTML = `<section class="card"><div class="card-head"><div><h3>Registro de actividad</h3><p>${rows.length} eventos</p></div><input id="audit-filter" placeholder="Filtrar por acción, módulo o usuario" style="max-width:300px"></div>
+    <div class="table-wrap"><table class="table-compact"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Módulo</th><th>Entidad</th><th>IP</th></tr></thead><tbody id="audit-rows">
+    ${rows.map((a) => `<tr data-filter="${esc(`${a.action} ${a.module} ${a.user} ${a.entity}`.toLowerCase())}"><td class="small">${fmtDate(a.created_at)}</td><td>${esc(a.user)}</td><td><strong>${esc(a.action)}</strong></td><td>${esc(a.module)}</td><td class="small">${esc(a.entity)}</td><td class="small mono">${esc(a.ip || "—")}</td></tr>`).join("") || `<tr><td colspan="6">${empty("Sin eventos")}</td></tr>`}
+    </tbody></table></div></section>`;
+  $("#audit-filter").oninput = (e) => { const q = e.target.value.toLowerCase(); $$("#audit-rows tr").forEach((r) => { r.hidden = !(r.dataset.filter || "").includes(q); }); };
+};
+
+Pages.reports = async (root) => {
+  setTitle("Reportes", "Exporta la información para análisis o presentaciones");
+  const card = (icon, title, text, path, file) => `<article class="card stack"><span class="eyebrow">${icon}</span><h3>${esc(title)}</h3><p class="muted">${esc(text)}</p>
+    <div><button class="btn btn-primary" data-action="download" data-path="${esc(path)}" data-file="${esc(file)}">Descargar</button></div></article>`;
+  root.innerHTML = `<section class="grid grid-auto">
+    ${card("CSV", "Tickets (CSV)", "Datos tabulares para filtrar y analizar.", "/reports/tickets.csv", "fixit-tickets.csv")}
+    ${card("Excel", "Tickets (Excel)", "Hoja de cálculo con formato.", "/reports/tickets.xlsx", "fixit-tickets.xlsx")}
+    ${card("PDF", "Tickets (PDF)", "Listado listo para compartir.", "/reports/tickets.pdf", "fixit-tickets.pdf")}
+    ${card("ML", "Dataset de Machine Learning", "Variables sin fuga de información y objetivos (horas de resolución, incumplimiento SLA). Incluye la columna de origen del registro.", "/ml/dataset.csv", "fixit-ml-dataset.csv")}
+  </section>`;
+};
+Actions.download = (el) => download(el.dataset.path, el.dataset.file);
+
+/* ---------- Global events ---------- */
+document.addEventListener("click", (e) => {
+  const pageLink = e.target.closest("[data-page-link]");
+  if (pageLink) { e.preventDefault(); go(pageLink.dataset.pageLink, pageLink.dataset.sub || ""); return; }
+  const navBtn = e.target.closest("#nav [data-page]");
+  if (navBtn) { go(navBtn.dataset.page); return; }
+  const el = e.target.closest("[data-action]");
+  if (el && Actions[el.dataset.action]) {
+    if (el.tagName === "A") e.preventDefault();
+    Actions[el.dataset.action](el, e);
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-action][tabindex]")) { e.preventDefault(); e.target.click(); }
+});
+document.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-action-change]");
+  if (el && ChangeActions[el.dataset.actionChange]) ChangeActions[el.dataset.actionChange](el, e);
+});
+Actions["toggle-menu"] = () => $("#app").classList.toggle("menu-open");
+window.addEventListener("hashchange", route);
+modal.addEventListener("click", (e) => { if (e.target === modal) modal.close(); });
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.submitter || $("#login-form button");
+  const error = $("#login-error");
+  error.hidden = true;
+  const email = $("#email").value.trim(), password = $("#password").value;
+  if (!email || password.length < 8) { error.textContent = "Ingresa tu correo y una contraseña de al menos 8 caracteres."; error.hidden = false; return; }
+  busy(btn, true, "Entrando…");
+  try {
+    const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(res.status === 401 ? "Correo o contraseña incorrectos." : (typeof data.detail === "string" ? data.detail : "No fue posible iniciar sesión."));
+    Session.save(data);
+    $("#password").value = "";
+    await startSession();
+    flash(`Bienvenido/a, ${App.me.full_name}`);
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally { busy(btn, false); }
+});
+
+$("#logout").onclick = () => {
+  Session.clear();
+  $("#content").innerHTML = "";
+  location.hash = "";
   showLogin();
+};
+$("#notify").onclick = () => go("notifications");
+$("#show-register").onclick = async () => {
+  modal.showModal();
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><span class="eyebrow">Solicitante</span><h2>Crear cuenta</h2></div><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">✕</button></div>
+    <div class="modal-body"><form id="register-form"><label>Nombre completo<input name="full_name" required minlength="2"></label>
+      <label>Correo institucional<input name="email" type="email" required></label><label>Contraseña<input name="password" type="password" minlength="8" required><span class="hint">Mínimo 8 caracteres.</span></label>
+      <button class="btn btn-primary" type="submit">Crear cuenta</button></form></div>`;
+  $("#register-form").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Revisa los datos ingresados.");
+      modal.close();
+      flash("Cuenta creada. Ya puedes iniciar sesión.");
+    } catch (err) { flash(err.message, true); }
+  };
+};
 
-  bindEvents();
-
-  init();
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener(
-    "DOMContentLoaded",
-    startApp
-  );
-} else {
-  startApp();
-}
+(async function boot() {
+  if (!Session.token()) { showLogin(); return; }
+  try { await startSession(); } catch { Session.clear(); showLogin(); }
+})();

@@ -12,3 +12,9 @@ pytest==8.3.4
 httpx==0.28.1
 openpyxl==3.1.5
 reportlab==4.2.5
+# Machine Learning
+numpy==1.26.4
+scikit-learn==1.5.2
+joblib==1.4.2
+# LLM provider SDK (only used when LLM_PROVIDER=anthropic)
+anthropic==1.13.0

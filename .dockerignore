@@ -1,0 +1,14 @@
+.env
+.env.*
+.git
+.venv
+venv
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+**/*.db
+backend/ml_models
+backend/scratch_models
+backend/uploads
+outputs
+work

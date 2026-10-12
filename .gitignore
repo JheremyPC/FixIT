@@ -1,7 +1,18 @@
 .env
+.env.*
+!.env.example
 __pycache__/
 .pytest_cache/
 *.pyc
 *.db
 uploads/
 backend/uploads/
+# Local virtualenvs
+.venv/
+venv/
+# Trained ML artifacts (regenerate with the training endpoint)
+backend/ml_models/
+ml_models/
+backend/scratch_models/
+# Generated datasets
+outputs/*.csv
