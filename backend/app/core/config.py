@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = None
     llm_model: str = ""
     llm_base_url: str = ""            # required for openai_compatible (e.g. http://localhost:11434/v1 or Gemini's .../v1beta/openai)
-    llm_fallback_model: str = "gemini-3.5-flash-lite"  # Gemini only: used if LLM_MODEL keeps answering HTTP 503; empty disables
+    llm_fallback_model: str = "gemini-3.5-flash-lite"  # Gemini only: used if LLM_MODEL keeps answering HTTP 429/503; empty disables
     llm_max_tokens: int = 2048
     llm_timeout_seconds: float = 60.0
     llm_effort: str = "low"           # anthropic output_config.effort; Gemini reasoning_effort (minimal|low|medium|high)

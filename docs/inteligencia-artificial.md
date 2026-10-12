@@ -83,10 +83,10 @@ LLM_MODEL=gemini-3.8-flash
 LLM_API_KEY=<clave de Google AI Studio>
 LLM_MAX_TOKENS=8192   # Gemini descuenta su razonamiento interno de este límite
 LLM_EFFORT=low        # se envía como reasoning_effort (minimal | low | medium | high)
-LLM_FALLBACK_MODEL=gemini-3.5-flash-lite   # alternativo si LLM_MODEL sigue en HTTP 503; vacío lo desactiva
+LLM_FALLBACK_MODEL=gemini-3.5-flash-lite   # alternativo si LLM_MODEL sigue en HTTP 429/503; vacío lo desactiva
 ```
 
-Ante HTTP 503 (modelo saturado) el backend reintenta hasta 3 veces con esperas de 1, 2 y 4 s y, si persiste, repite el ciclo con `LLM_FALLBACK_MODEL` (solo con Gemini). Los errores de autenticación, 400, 404 y 429 no se reintentan. Los mensajes de error se registran sin la API key ni tokens.
+Ante HTTP 429 (cuota o frecuencia excedida) o 503 (modelo saturado) el backend reintenta hasta 3 veces con esperas de 1, 2 y 4 s. Si el proveedor indica cuánto esperar (cabecera `Retry-After` o `retryDelay` de Gemini) se usa ese valor; como máximo se esperan 10 s en total por modelo, y si la espera pedida es mayor se pasa directamente al alternativo. Si el error persiste, repite el ciclo con `LLM_FALLBACK_MODEL` (solo con Gemini) y, si ambos siguen limitados, responde un mensaje que nombra los dos modelos y el tiempo sugerido. Los errores de autenticación, 400 y 404 no se reintentan. Los mensajes de error se registran sin la API key ni tokens.
 
 Una suscripción de Claude Code no incluye una API key: la clave debe crearse en la consola del proveedor. Sin proveedor configurado, el asistente informa que falta la configuración, muestra solo resultados de la búsqueda local y nunca simula una respuesta.
 

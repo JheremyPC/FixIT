@@ -9,8 +9,11 @@ LLM_PROVIDER empty              -> not configured: callers must say so instead o
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -25,8 +28,10 @@ GEMINI_EFFORTS = {"minimal", "low", "medium", "high"}  # reasoning_effort values
 # Google (AIza...), OpenAI/Anthropic-style (sk-...) keys and bearer tokens echoed back in error bodies.
 SECRET_PATTERN = re.compile(r"AIza[0-9A-Za-z_\-]{20,}|sk-[0-9A-Za-z_\-]{10,}|(?i:bearer)\s+\S+")
 ERROR_DETAIL_MAX = 300
-UNAVAILABLE = 503
-RETRY_DELAYS_SECONDS = (1, 2, 4)  # waits before each of the 3 retries of an HTTP 503
+RATE_LIMITED, UNAVAILABLE = 429, 503
+RETRYABLE = {RATE_LIMITED, UNAVAILABLE}  # transient: retried, then the fallback model. Never 400/401/403/404.
+RETRY_DELAYS_SECONDS = (1, 2, 4)  # waits before each of the 3 retries (Retry-After replaces them when present)
+RETRY_WAIT_BUDGET_SECONDS = 10  # max total wait per model; a longer Retry-After goes straight to the fallback
 _sleep = time.sleep  # indirection so tests do not actually wait
 
 
@@ -131,22 +136,67 @@ def _openai_compatible(system: str, messages: list[dict], model: str) -> dict:
     # The fallback model only makes sense on Gemini (its default is a Gemini model); other servers keep one model.
     fallback = settings.llm_fallback_model.strip() if gemini else ""
     candidates = [model] + ([fallback] if fallback and fallback != model else [])
+    failures = []  # (model, final response, attempts) of every model that stayed 429/503
     for current in candidates:
-        response = _post_with_retries(system, messages, current, key, gemini)
-        if response.status_code != UNAVAILABLE:
-            if current != model:
-                logger.warning("LLM fallback model %s answered after HTTP 503 from %s", current, model)
+        response, attempts = _post_with_retries(system, messages, current, key, gemini)
+        if response.status_code not in RETRYABLE:
+            if failures:
+                logger.warning("LLM fallback model %s answered after HTTP %s from %s", current,
+                               failures[0][1].status_code, model)
             return _handle_response(response, current, key, gemini)
-    attempts = 1 + len(RETRY_DELAYS_SECONDS)
-    tried = " ni con el alternativo ".join(candidates)
-    raise LLMError(f"El proveedor LLM no está disponible temporalmente (HTTP 503) con el modelo {tried} "
-                   f"tras {attempts} intentos por modelo. Intente nuevamente en unos minutos."
-                   + (f" Detalle: {_error_detail(response, key)}" if response.content else ""))
+        failures.append((current, response, attempts))
+    raise LLMError(_exhausted_message(failures, key))
 
 
-def _post_with_retries(system: str, messages: list[dict], model: str, key: str | None, gemini: bool) -> httpx.Response:
-    """POST /chat/completions; only HTTP 503 (temporarily unavailable) is retried, with progressive waits.
-    Authentication, 400 and every other status are returned at once for _handle_response."""
+def _exhausted_message(failures: list[tuple[str, httpx.Response, int]], key: str | None) -> str:
+    tried = " ni con el alternativo ".join(model for model, _, _ in failures)
+    last = failures[-1][1]
+    detail = f" Detalle: {_error_detail(last, key)}" if last.content else ""
+    statuses = {response.status_code for _, response, _ in failures}
+    if statuses == {UNAVAILABLE}:
+        return (f"El proveedor LLM no está disponible temporalmente (HTTP 503) con el modelo {tried} "
+                f"tras {1 + len(RETRY_DELAYS_SECONDS)} intentos por modelo. Intente nuevamente en unos minutos.{detail}")
+    hints = [h for _, response, _ in failures if (h := _retry_after_seconds(response)) is not None]
+    when = f"en unos {max(1, math.ceil(min(hints)))} segundos" if hints else "en unos minutos"
+    if statuses == {RATE_LIMITED}:
+        reason = f"limitó las solicitudes (HTTP 429: cuota o frecuencia excedida) con el modelo {tried}"
+    else:
+        reason = "no pudo atender la solicitud con ningún modelo (" + "; ".join(
+            f"{model}: HTTP {response.status_code}" for model, response, _ in failures) + ")"
+    attempts = ", ".join(str(n) for _, _, n in failures)
+    return f"El proveedor LLM {reason} tras {attempts} intentos. Intente nuevamente {when}.{detail}"
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Wait requested by the provider: Retry-After (seconds or HTTP date) or Gemini's RetryInfo.retryDelay."""
+    value = response.headers.get("retry-after", "").strip()
+    if value:
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            try:
+                when = parsedate_to_datetime(value)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError):
+                pass
+    try:  # [{"error": {"details": [{"@type": ".../google.rpc.RetryInfo", "retryDelay": "17s"}]}}]
+        data = response.json()
+        error = (data[0] if isinstance(data, list) and data else data).get("error", {})
+        for item in error.get("details") or []:
+            match = re.fullmatch(r"(\d+(?:\.\d+)?)s", str(item.get("retryDelay", "")).strip())
+            if match:
+                return float(match[1])
+    except (ValueError, AttributeError, IndexError, TypeError):
+        pass
+    return None
+
+
+def _post_with_retries(system: str, messages: list[dict], model: str, key: str | None, gemini: bool) -> tuple[httpx.Response, int]:
+    """POST /chat/completions -> (response, attempts). Only HTTP 429 and 503 are retried, with progressive waits
+    or the provider's Retry-After, within RETRY_WAIT_BUDGET_SECONDS. Authentication, 400 and every other status
+    are returned at once for _handle_response."""
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -155,18 +205,28 @@ def _post_with_retries(system: str, messages: list[dict], model: str, key: str |
     # Only sent to Gemini: other OpenAI-compatible servers (e.g. Ollama) may reject the field.
     if gemini and settings.llm_effort in GEMINI_EFFORTS:
         body["reasoning_effort"] = settings.llm_effort
+    waited = 0.0
     for attempt, delay in enumerate([*RETRY_DELAYS_SECONDS, None], start=1):
         try:
             response = httpx.post(settings.llm_base_url.rstrip("/") + "/chat/completions", json=body, headers=headers,
                                   timeout=settings.llm_timeout_seconds)
         except httpx.HTTPError:
             raise LLMError("No se pudo conectar con el proveedor LLM.")
-        if response.status_code != UNAVAILABLE:
-            return response
-        logger.warning("LLM provider HTTP 503 (modelo %s, intento %s): %s", model, attempt, _error_detail(response, key))
-        if delay is not None:
-            _sleep(delay)
-    return response
+        if response.status_code not in RETRYABLE:
+            return response, attempt
+        logger.warning("LLM provider HTTP %s (modelo %s, intento %s): %s", response.status_code, model, attempt,
+                       _error_detail(response, key))
+        if delay is None:
+            break
+        hinted = _retry_after_seconds(response)
+        if hinted is not None:
+            delay = hinted
+        if waited + delay > RETRY_WAIT_BUDGET_SECONDS:
+            logger.warning("LLM provider pide esperar %.1f s (modelo %s): sin más reintentos con este modelo", delay, model)
+            break
+        _sleep(delay)
+        waited += delay
+    return response, attempt
 
 
 def _handle_response(response: httpx.Response, model: str, key: str | None, gemini: bool) -> dict:
@@ -179,8 +239,6 @@ def _handle_response(response: httpx.Response, model: str, key: str | None, gemi
         raise LLMError("El proveedor LLM rechazó las credenciales configuradas.")
     if response.status_code == 404:
         raise LLMError(f"Modelo LLM no encontrado: {model}.")
-    if response.status_code == 429:
-        raise LLMError("El proveedor LLM limitó las solicitudes. Intente nuevamente en unos minutos.")
     if response.status_code >= 400:
         if not detail:
             logger.warning("LLM provider HTTP %s", response.status_code)

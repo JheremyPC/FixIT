@@ -243,8 +243,11 @@ def scripted_llm(monkeypatch):
 
     def fake_post(url, json, headers, timeout):
         calls.append(json["model"])
-        status, payload = script.pop(0)
-        return httpx.Response(status, json=payload) if not isinstance(payload, str) else httpx.Response(status, text=payload)
+        status, payload, *extra = script.pop(0)  # optional third item: response headers (e.g. Retry-After)
+        response_headers = extra[0] if extra else None
+        if isinstance(payload, str):
+            return httpx.Response(status, text=payload, headers=response_headers)
+        return httpx.Response(status, json=payload, headers=response_headers)
 
     monkeypatch.setattr(provider.httpx, "post", fake_post)
 
@@ -294,9 +297,8 @@ def test_llm_clear_message_when_both_models_fail_without_leaking_key(scripted_ll
     (403, {"error": {"message": "Permission denied"}}, "credenciales"),
     (400, [{"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "Invalid value for max_tokens"}}], "HTTP 400: INVALID_ARGUMENT"),
     (404, {"error": {"message": "model not found"}}, "no encontrado"),
-    (429, {"error": {"message": "quota"}}, "limitó"),
 ])
-def test_llm_non_503_errors_are_not_retried_nor_fall_back(scripted_llm, status, payload, expected):
+def test_llm_non_transient_errors_are_not_retried_nor_fall_back(scripted_llm, status, payload, expected):
     with pytest.raises(scripted_llm.error, match=expected):
         scripted_llm((status, payload))
     assert scripted_llm.calls == ["gemini-3.6-flash"] and scripted_llm.sleeps == []
@@ -366,3 +368,77 @@ def test_chat_frequency_claims_rest_on_global_stats_not_on_examples(client, head
     # Scope is preserved: a requester with no tickets gets no category counts.
     mine = client.post("/api/llm/chat", headers=headers["USUARIO"], json={"message": "impresora no imprime"}).json()
     assert mine["stats"]["tickets_por_categoria"] == {}
+
+
+def _rate_limited(retry_delay=None, extra=""):
+    error = {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": f"Resource has been exhausted (e.g. check quota).{extra}"}
+    if retry_delay:
+        error["details"] = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}]
+    return [{"error": error}]
+
+
+def test_llm_429_is_retried_with_progressive_waits(scripted_llm):
+    result = scripted_llm((429, _rate_limited()), (429, _rate_limited()), (200, OK_BODY))
+    assert result["text"] == "Hola" and result["model"] == "gemini-3.6-flash"
+    assert scripted_llm.calls == ["gemini-3.6-flash"] * 3 and scripted_llm.sleeps == [1, 2]
+
+
+def test_llm_429_respects_retry_after(scripted_llm):
+    from email.utils import format_datetime
+    from datetime import datetime, timedelta, timezone
+
+    scripted_llm((429, _rate_limited(), {"Retry-After": "3"}), (200, OK_BODY))
+    assert scripted_llm.sleeps == [3]
+    scripted_llm.sleeps.clear()
+    scripted_llm((429, _rate_limited(retry_delay="2s")), (200, OK_BODY))  # Gemini RetryInfo in the body
+    assert scripted_llm.sleeps == [2]
+    scripted_llm.sleeps.clear()
+    http_date = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=6), usegmt=True)
+    scripted_llm((429, _rate_limited(), {"Retry-After": http_date}), (200, OK_BODY))
+    assert len(scripted_llm.sleeps) == 1 and 3 <= scripted_llm.sleeps[0] <= 6
+    scripted_llm.sleeps.clear()
+    scripted_llm((429, _rate_limited(), {"Retry-After": "soon"}), (200, OK_BODY))  # unparseable: default wait
+    assert scripted_llm.sleeps == [1]
+
+
+def test_llm_429_falls_back_after_retries_or_at_once_when_wait_is_too_long(scripted_llm):
+    result = scripted_llm(*[(429, _rate_limited())] * 4, (200, OK_BODY))
+    assert result["model"] == "gemini-3.5-flash-lite" and scripted_llm.sleeps == [1, 2, 4]
+    assert scripted_llm.calls == ["gemini-3.6-flash"] * 4 + ["gemini-3.5-flash-lite"]
+
+    scripted_llm.calls.clear(), scripted_llm.sleeps.clear()
+    result = scripted_llm((429, _rate_limited(), {"Retry-After": "60"}), (200, OK_BODY))  # e.g. per-minute quota
+    assert result["model"] == "gemini-3.5-flash-lite" and scripted_llm.sleeps == []
+    assert scripted_llm.calls == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+
+
+def test_llm_clear_message_when_both_models_are_rate_limited(scripted_llm, caplog):
+    import logging
+
+    leak = f" key={GEMINI_KEY} token=AIzaSyA1234567890abcdefghijklmnop"
+    with caplog.at_level(logging.WARNING, logger="fixit.llm"), pytest.raises(scripted_llm.error) as exc:
+        scripted_llm(*[(429, _rate_limited(extra=leak), {"Retry-After": "5"})] * 6)
+    message = str(exc.value)
+    assert "HTTP 429" in message and "gemini-3.6-flash" in message and "gemini-3.5-flash-lite" in message
+    assert "Intente nuevamente en unos 5 segundos" in message and "RESOURCE_EXHAUSTED" in message
+    # Retry-After 5 s: two waits fit the 10 s budget per model, a third would not.
+    assert scripted_llm.calls == ["gemini-3.6-flash"] * 3 + ["gemini-3.5-flash-lite"] * 3
+    assert scripted_llm.sleeps == [5, 5, 5, 5]
+    for text in (message, caplog.text):
+        assert GEMINI_KEY not in text and "AIzaSy" not in text and "[redactado]" in text
+
+    with pytest.raises(scripted_llm.error, match="Intente nuevamente en unos minutos"):
+        scripted_llm(*[(429, _rate_limited())] * 8)
+
+
+def test_llm_mixed_429_and_503_message_names_each_model(scripted_llm):
+    with pytest.raises(scripted_llm.error) as exc:
+        scripted_llm(*[(429, _rate_limited())] * 4, *[(503, _overloaded())] * 4)
+    assert "gemini-3.6-flash: HTTP 429; gemini-3.5-flash-lite: HTTP 503" in str(exc.value)
+
+
+def test_llm_auth_error_of_fallback_after_429_is_not_retried(scripted_llm):
+    with pytest.raises(scripted_llm.error, match="credenciales"):
+        scripted_llm(*[(429, _rate_limited())] * 4, (401, {"error": {"message": "Unauthorized"}}))
+    assert scripted_llm.calls == ["gemini-3.6-flash"] * 4 + ["gemini-3.5-flash-lite"]
+    assert scripted_llm.sleeps == [1, 2, 4]
