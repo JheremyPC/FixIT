@@ -6,6 +6,7 @@ from app.api.router import can_access_ticket, get_ticket
 from app.core.database import get_db
 from app.llm import assistant, knowledge
 from app.llm.provider import provider_status
+from app.llm.telemetry import llm_context
 from app.models import User
 from app.schemas import ChatIn
 from app.security.auth import current_user, require_roles
@@ -21,7 +22,8 @@ def status(_: User = Depends(current_user)):
 
 @llm_api.post("/chat")
 def chat(payload: ChatIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    result = assistant.chat(db, user, payload.message, [h.model_dump() for h in payload.history])
+    with llm_context("asistente", user.id):
+        result = assistant.chat(db, user, payload.message, [h.model_dump() for h in payload.history])
     # Audit the use, never the content of the conversation.
     audit(db, user.id, "CONSULTA_ASISTENTE", "IA", "LLM", None, new={"llm_used": result["llm_used"], "sources": len(result["sources"])}, request=request)
     db.commit()
@@ -38,7 +40,8 @@ def search(q: str = Query(min_length=2, max_length=300), limit: int = Query(8, g
 def summary(ticket_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     ticket = get_ticket(db, ticket_id)
     can_access_ticket(user, ticket)
-    result = assistant.summarize_ticket(db, user, ticket)
+    with llm_context("resumen_ticket", user.id):
+        result = assistant.summarize_ticket(db, user, ticket)
     audit(db, user.id, "RESUMEN_IA", "IA", "TICKET", ticket.id, new={"llm_used": result["llm_used"]}, request=request)
     db.commit()
     return result
@@ -47,9 +50,6 @@ def summary(ticket_id: str, request: Request, user: User = Depends(current_user)
 @llm_api.post("/tickets/{ticket_id}/suggestions")
 def suggestions(ticket_id: str, request: Request, user: User = Depends(require_roles("ADMIN", "JEFE_TI", "TECNICO")),
                 db: Session = Depends(get_db)):
-    ticket = get_ticket(db, ticket_id)
-    can_access_ticket(user, ticket)
-    result = assistant.suggest_diagnosis(db, user, ticket)
-    audit(db, user.id, "SUGERENCIA_IA", "IA", "TICKET", ticket.id, new={"llm_used": result["llm_used"]}, request=request)
-    db.commit()
-    return result
+    # Served by the diagnosis agent, so the request is logged, audited and monitored like any agent run.
+    from app.api.agents import run_diagnosis
+    return run_diagnosis(db, user, ticket_id, request)

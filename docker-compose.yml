@@ -5,6 +5,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
     ports:
       - "5432:5432"
     volumes:
@@ -22,6 +23,7 @@ services:
       # Local development always targets the local "db" service by default, even when .env
       # holds a production URL (e.g. Supabase). Set COMPOSE_DATABASE_URL to override explicitly.
       DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       ML_MODEL_DIR: /srv/fixit/backend/ml_models
     ports:
       - "8000:8000"

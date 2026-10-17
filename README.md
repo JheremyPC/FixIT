@@ -1,6 +1,6 @@
 # FixIT
 
-Sistema Integral de Gestión de Soporte Técnico: FastAPI, PostgreSQL y una interfaz web sin dependencias de frontend, con un Centro de Inteligencia Artificial (Machine Learning + asistente LLM).
+Sistema Integral de Gestión de Soporte Técnico: FastAPI, PostgreSQL y una interfaz web sin dependencias de frontend, con Machine Learning predictivo y un asistente LLM.
 
 - **Roles:** ADMIN, JEFE_TI, TECNICO y USUARIO, cada uno con su propio panel.
 - **Operación:** tickets, asignación automática ponderada, comentarios, adjuntos, calificaciones, notificaciones, auditoría y reportes (CSV, Excel, PDF).
@@ -21,7 +21,7 @@ En Docker Compose la API usa **siempre el servicio local `db`**, aunque `.env` c
 ```bash
 docker compose up -d --build
 docker compose exec api python -m app.synthetic import --csv /srv/fixit/outputs/fixit_synthetic_tickets.csv
-# Entrar como admin → Centro de IA → «Entrenar ahora»
+# Los modelos ML se entrenan al iniciar si no hay modelos guardados (Machine Learning → «Entrenar ahora» para reentrenar)
 ```
 
 El importador rechaza cualquier base remota (Supabase, Render, etc.). Las cuentas de demostración son `<nombre>@sintetico.fixit.example` con la contraseña `Demo!2026` (configurable con `FIXIT_SYNTHETIC_PASSWORD`).
@@ -55,7 +55,8 @@ $env:PYTHONPATH = "."
 
 - No hay cambios de tablas. La migración `0002_skip_synthetic_automation` solo modifica la función de Supabase `fixit_enqueue_automation_event()` para que una importación de demostración no genere eventos de automatización; en bases sin esa función no hace nada. Los registros sintéticos se identifican por el prefijo `SYN-` y el dominio `@sintetico.fixit.example`; nunca se cargan automáticamente en Supabase (procedimiento manual en `docs/datos-sinteticos.md`).
 - Variables nuevas opcionales en Render: `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `ML_MODEL_DIR` (ver `.env.example`).
-- El disco de Render es efímero: los modelos entrenados se pierden al reiniciar. Reentrene desde el Centro de IA después de cada despliegue o configure un disco persistente y apunte `ML_MODEL_DIR` a él.
+- Los modelos entrenados se guardan en la base de datos (tabla `ml_artifacts`, migración `0003_ml_artifacts`) y se cargan al iniciar, aunque el disco de Render sea efímero. Si cambia `JWT_SECRET_KEY`, se reentrenan automáticamente en el siguiente arranque.
+- Agentes de IA y monitor del LLM: tablas de la migración `0004_agents_observability` (ver docs/inteligencia-artificial.md).
 - El worker de automatización solo se inicia con PostgreSQL y si existe la tabla `automation_events` (Supabase); en bases locales se desactiva con un aviso.
 
 ## Flujo operativo

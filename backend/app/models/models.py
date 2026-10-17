@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -224,3 +224,76 @@ class Setting(Base):
     description: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+
+
+class MLArtifact(Base):
+    """Trained ML artifacts (joblib) and their metadata (JSON), signed with HMAC; see app.ml.store."""
+    __tablename__ = "ml_artifacts"
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    version: Mapped[str] = mapped_column(String(60), nullable=False)
+    payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    signature: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AgentState(Base):
+    """One row per agent: enablement, schedule and the cross-process execution lock (see app.agents.runner)."""
+    __tablename__ = "agent_states"
+    agent: Mapped[str] = mapped_column(String(30), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    schedule_minutes: Mapped[int | None] = mapped_column(Integer)
+    lock_run_id: Mapped[str | None] = mapped_column(String(36))
+    lock_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AgentRun(Base):
+    """Execution log of an agent. ``result`` holds counts and item references, never prompts or LLM answers."""
+    __tablename__ = "agent_runs"
+    __table_args__ = (Index("ix_agent_runs_agent_started", "agent", "started_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    agent: Mapped[str] = mapped_column(String(30), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    ticket_id: Mapped[str | None] = mapped_column(ForeignKey("tickets.id"))
+    params: Mapped[dict | None] = mapped_column(JSON)
+    summary: Mapped[str | None] = mapped_column(String(500))
+    result: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(String(500))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    actor: Mapped[User | None] = relationship()
+
+
+class AgentAlert(Base):
+    """Alerts raised by agents. ``dedup_key`` is unique, so the same alert is never raised twice."""
+    __tablename__ = "agent_alerts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    dedup_key: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    agent: Mapped[str] = mapped_column(String(30), nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    level: Mapped[str] = mapped_column(String(20), nullable=False)
+    ticket_id: Mapped[str | None] = mapped_column(ForeignKey("tickets.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"))
+    message: Mapped[str] = mapped_column(String(300), nullable=False)
+    value: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
+class LLMCall(Base):
+    """Observability of LLM requests: metadata only (no prompts, answers, keys or conversations)."""
+    __tablename__ = "llm_calls"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(40))
+    model: Mapped[str | None] = mapped_column(String(100))
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    error: Mapped[str | None] = mapped_column(String(300))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"))

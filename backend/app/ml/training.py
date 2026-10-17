@@ -149,6 +149,8 @@ def train_resolution(records: list[dict]) -> tuple[dict, Pipeline | None, dict |
         "mae_hours": round(float(mae), 2), "median_ae_hours": round(float(M.median_absolute_error(yte, pred)), 2),
         "baseline_mae_hours": round(float(mae_base), 2), "baseline": "Mediana histórica por prioridad",
         "improvement_vs_baseline_pct": round((1 - mae / mae_base) * 100, 1) if mae_base else None,
+        "rmse_hours": round(float(np.sqrt(M.mean_squared_error(yte, pred))), 2),
+        "r2_hours": round(float(M.r2_score(yte, pred)), 3),
         "r2_log": round(float(M.r2_score(np.log1p(yte), np.log1p(pred))), 3),
         "within_50pct": round(float(np.mean(np.abs(pred - yte) <= 0.5 * yte)), 3),
         "per_priority": per_priority,
@@ -343,18 +345,13 @@ def train_all(db: Session, include_synthetic: bool = True, actor_name: str | Non
             models["recommendation"] = _insufficient("Requiere los modelos de resolución y de riesgo SLA entrenados.")
 
         version = f"fixit-ml-{started:%Y%m%d-%H%M%S}"
-        for name, bundle in (("resolution", res_bundle), ("sla_risk", sla_bundle), ("priority", prio_bundle)):
+        bundles = {"resolution": res_bundle, "sla_risk": sla_bundle, "priority": prio_bundle,
+                   "forecast": dict(fc_result) if fc_result.get("status") == "trained" else None}
+        for bundle in bundles.values():
             if bundle is not None:
                 bundle.update({"version": version, "trained_at": started.isoformat()})
-                store.save_bundle(name, bundle)
-            else:
-                store.delete_bundle(name)  # never keep a stale model next to new metadata
-        if fc_result.get("status") == "trained":
-            store.save_bundle("forecast", {**fc_result, "version": version, "trained_at": started.isoformat()})
-        else:
-            store.delete_bundle("forecast")
 
-        meta = {"version": version, "trained_at": started.isoformat(), "trained_by": actor_name,
+        meta = {"format": store.FORMAT_VERSION, "version": version, "trained_at": started.isoformat(), "trained_by": actor_name,
                 "duration_seconds": round((datetime.now(UTC) - started).total_seconds(), 2),
                 "include_synthetic": include_synthetic, "data": data_summary(records),
                 "split": {"method": "temporal", "test_fraction": TEST_FRACTION,
@@ -363,7 +360,20 @@ def train_all(db: Session, include_synthetic: bool = True, actor_name: str | Non
                 "models": {k: {kk: vv for kk, vv in v.items() if kk not in {"history_daily", "history_weekly", "holdout", "forecast_daily",
                                                                            "forecast_weekly", "by_category"}}
                            for k, v in models.items()}}
-        store.save_metadata(meta)
+        store.persist(db, bundles, meta)
         return meta
     finally:
         store.TRAIN_LOCK.release()
+
+
+def ensure_ready(db: Session) -> str:
+    """Startup: load the stored models; train them only when they are missing, altered or
+    incompatible with this version (or nothing could be trained before and there are new tickets)."""
+    meta = store.restore(db)
+    include = meta.get("include_synthetic", True) if meta else True
+    if meta:
+        nothing_trained = all(m.get("status") != "trained" for m in meta["models"].values())
+        if not nothing_trained or len(load_records(db, include_synthetic=include)) <= meta["data"]["tickets_used"]:
+            return "loaded"
+    train_all(db, include_synthetic=include, actor_name="Arranque automático")
+    return "trained"

@@ -22,7 +22,7 @@ CSV, XLSX y PDF están implementados para el reporte de tickets. La capa de repo
 Los registros sintéticos se marcan con el prefijo de número `SYN-` y el dominio `@sintetico.fixit.example` en lugar de añadir columnas. Así no se requieren migraciones en Supabase y la marca es consultable y visible. El importador rechaza bases remotas por defecto y la purga solo afecta a esos registros.
 
 ## D-008: Machine Learning con scikit-learn y evaluación temporal
-Se usan modelos de scikit-learn (gradient boosting, regresión logística, Ridge) por ser suficientes para datos tabulares de este tamaño y no requerir infraestructura adicional. Las variables se calculan con un barrido temporal para evitar fugas, y la evaluación siempre es fuera de tiempo. Los artefactos se versionan en disco (`ML_MODEL_DIR`) con metadatos que registran el origen real/sintético de los datos.
+Se usan modelos de scikit-learn (gradient boosting, regresión logística, Ridge) por ser suficientes para datos tabulares de este tamaño y no requerir infraestructura adicional. Las variables se calculan con un barrido temporal para evitar fugas, y la evaluación siempre es fuera de tiempo. Los artefactos se versionan en la base de datos (`ml_artifacts`, firmados con HMAC; `ML_MODEL_DIR` es solo caché) con metadatos que registran el origen real/sintético de los datos.
 
 ## D-009: proveedor LLM configurable y opcional
 El asistente usa el SDK oficial de Anthropic o un endpoint compatible con `/chat/completions`, elegido por variables de entorno. Sin credenciales, el sistema lo informa y no simula respuestas; la búsqueda contextual local funciona igualmente. El contexto enviado al LLM se filtra por los permisos del usuario.

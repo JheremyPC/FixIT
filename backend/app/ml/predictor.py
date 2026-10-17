@@ -209,6 +209,17 @@ def open_predictions(db: Session, filters: dict, limit: int = 50) -> dict:
             "tickets": tickets}
 
 
+def score_open(db: Session) -> dict:
+    """Predicted hours and SLA risk of every open ticket (no explanations), for the agents."""
+    predictor = Predictor()
+    predictor.require()
+    now, techs, records, tracker = _context(db)
+    open_recs = [r for r in records if r["state"] in OPEN_STATES]
+    hours, probs = predictor.predict([r["x"] for r in open_recs]) if open_recs else (np.array([]), np.array([]))
+    return {"predictor": predictor, "now": now, "techs": techs, "tracker": tracker,
+            "rows": [_ticket_row(r, h, p, now, techs) for r, h, p in zip(open_recs, hours, probs)], "records": open_recs}
+
+
 def ticket_prediction(db: Session, ticket_id: str) -> dict:
     predictor = Predictor()
     predictor.require()

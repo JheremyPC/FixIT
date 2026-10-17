@@ -67,13 +67,27 @@ def provider_status() -> dict:
 
 
 def complete(system: str, messages: list[dict]) -> dict:
-    """Return {"text", "provider", "model"}; raise LLMNotConfigured / LLMError otherwise."""
+    """Return {"text", "provider", "model"}; raise LLMNotConfigured / LLMError otherwise.
+    Every call is recorded in llm_calls (metadata only, see app.llm.telemetry)."""
+    from app.llm import telemetry
+
     status = provider_status()
+    started = time.perf_counter()
+    elapsed = lambda: int((time.perf_counter() - started) * 1000)
     if not status["configured"]:
+        telemetry.record(status["provider"], status["model"], "NO_CONFIGURADO", 0, status["message"])
         raise LLMNotConfigured(status["message"])
-    if status["provider"] == "anthropic":
-        return _anthropic(system, messages, status["model"])
-    return _openai_compatible(system, messages, status["model"])
+    try:
+        if status["provider"] == "anthropic":
+            result = _anthropic(system, messages, status["model"])
+        else:
+            result = _openai_compatible(system, messages, status["model"])
+    except LLMError as exc:
+        telemetry.record(status["provider"], status["model"], "ERROR", elapsed(), str(exc))
+        raise
+    telemetry.record(result["provider"], result["model"], "OK", elapsed(),
+                     fallback_used=result["provider"] == "openai_compatible" and result["model"] != status["model"])
+    return result
 
 
 def _anthropic(system: str, messages: list[dict], model: str) -> dict:

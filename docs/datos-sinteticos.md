@@ -17,7 +17,7 @@ Generador reproducible de tickets ficticios para desarrollo, demostración y ent
 | Tickets | número `SYN-000001` … `SYN-005000`, etiqueta «Sintético» en la interfaz, campo `synthetic: true` en la API |
 | Usuarios | correo `@sintetico.fixit.example` (dominio reservado, nunca es un buzón real) |
 | Metadatos | ajuste `synthetic.dataset` (semilla, fecha, resumen) y evento de auditoría `IMPORTAR_SINTETICOS` |
-| Modelos | `metadata.json` registra el porcentaje de datos sintéticos; el Centro de IA muestra un aviso visible |
+| Modelos | `metadata.json` registra el porcentaje de datos sintéticos; la pestaña Métricas de Machine Learning lo documenta |
 
 ## Comandos
 

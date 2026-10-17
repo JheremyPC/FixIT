@@ -98,6 +98,41 @@ def test_training_pipeline_and_predictions(client, headers):
     assert csv.status_code == 200 and csv.text.startswith("number,synthetic")
 
 
+def test_models_are_restored_from_database_at_startup_without_retraining(client, headers, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.ml import store, training
+    from app.models import MLArtifact
+
+    h = headers["JEFE_TI"]
+    version = client.get("/api/ml/status", headers=h).json()["metadata"]["version"]
+    calls = []
+    monkeypatch.setattr(training, "train_all", lambda db, **kw: calls.append(kw))
+
+    for path in settings.ml_path.iterdir():  # ephemeral disk: the local cache is gone after a restart
+        path.unlink()
+    with TestClient(app):
+        pass
+    status = client.get("/api/ml/status", headers=h).json()
+    assert calls == [] and status["trained"] is True and status["metadata"]["version"] == version and status["history"]
+    assert client.get("/api/ml/predictions?limit=5", headers=h).status_code == 200
+
+    with SessionLocal() as db:  # a tampered artifact is never unpickled: the models are retrained instead
+        row = db.get(MLArtifact, "sla_risk")
+        original, row.payload = row.payload, row.payload + b"x"
+        db.commit()
+        assert training.ensure_ready(db) == "trained" and len(calls) == 1
+        assert client.get("/api/ml/status", headers=h).json()["trained"] is False
+        db.get(MLArtifact, "sla_risk").payload = original
+        db.commit()
+        assert training.ensure_ready(db) == "loaded" and len(calls) == 1
+    assert client.get("/api/ml/status", headers=h).json()["trained"] is True
+
+    meta = store.load_metadata()
+    assert store.compatible(meta)
+    assert not store.compatible({**meta, "format": store.FORMAT_VERSION + 1})
+    assert not store.compatible({**meta, "libraries": {**meta["libraries"], "scikit-learn": "0.0"}})
+
+
 def test_features_do_not_leak_outcomes():
     assert not {"state", "resolved_at", "started_at", "closed_at", "diagnosis", "solution", "rating"} & set(FEATURES)
     base = datetime(2026, 1, 5, 10, tzinfo=timezone.utc)

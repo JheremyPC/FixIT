@@ -1,35 +1,41 @@
 "use strict";
-/* FixIT — Centro de Inteligencia Artificial (ADMIN / JEFE_TI). Every number shown here comes from
+/* FixIT — Machine Learning (ADMIN / JEFE_TI). Every number shown here comes from
  * the backend models (/api/ml/*); nothing is computed or invented in the browser. */
 
 const AI_TABS = [
   ["resumen", "Resumen y entrenamiento"], ["riesgo", "Riesgo SLA"], ["tecnicos", "Técnicos"], ["demanda", "Demanda"],
-  ["patrones", "Patrones"], ["simulador", "Simulador"], ["metricas", "Métricas"], ["asistente", "Asistente"],
+  ["patrones", "Patrones"], ["simulador", "Simulador"], ["metricas", "Métricas"],
 ];
 const aiFilters = { area_id: "", category_id: "", priority: "", technician_id: "", source: "all" };
 const patternFilters = { period: "month", days: "365", area_id: "", category_id: "", priority: "", technician_id: "", source: "all" };
 let mlStatusCache = null;
 
 function notTrainedBanner(message) {
-  return `<div class="banner banner-warn"><span class="ico">ⓘ</span><div><b>Modelo no disponible</b>${esc(message)}
-    <div style="margin-top:8px"><button class="btn btn-primary btn-sm" data-page-link="ia" data-sub="resumen">Ir a entrenamiento</button></div></div></div>`;
+  return banner("warn", "Modelo no disponible", message, `<div><button class="btn btn-primary btn-sm" data-page-link="ia" data-sub="resumen">Ir a entrenamiento</button></div>`);
 }
 
 async function aiCall(box, fn) {
   try { return await fn(); }
   catch (error) {
-    box.innerHTML = error.status === 409 ? notTrainedBanner(error.message) : `<div class="banner banner-crit"><span class="ico">⚠</span><div>${esc(error.message)}</div></div>`;
+    box.innerHTML = error.status === 409 ? notTrainedBanner(error.message) : banner("crit", "", error.message);
     return null;
   }
 }
 
+/* #/ia/<tab> renders the ML tabs; #/ia/agentes is the agents page (own nav entry, no ML tabs). */
 Pages.ia = async (root, sub) => {
-  const tab = AI_TABS.some(([k]) => k === sub) ? sub : "resumen";
-  setTitle("Centro de Inteligencia Artificial", "Machine Learning predictivo y asistente LLM");
-  root.innerHTML = `<nav class="tabs" aria-label="Secciones de IA">${AI_TABS.map(([k, v]) => `<button type="button" class="${k === tab ? "active" : ""}" data-page-link="ia" data-sub="${k}">${esc(v)}</button>`).join("")}</nav>
-    <div id="ai-body" class="grid">${loadingHtml()}</div>`;
+  if (sub === "agentes") {
+    setTitle("Agentes y monitor", "Cinco agentes de IA: ejecución, programación, actividad del LLM y evaluación");
+    root.innerHTML = `<div id="ai-body" class="grid">${loadingHtml()}</div>`;
+  } else {
+    const tab = AI_TABS.some(([k]) => k === sub) ? sub : "resumen";
+    sub = tab;
+    setTitle("Machine Learning", "Modelos predictivos de tiempos, riesgo de SLA, técnicos y demanda");
+    root.innerHTML = `<nav class="tabs" aria-label="Secciones de Machine Learning">${AI_TABS.map(([k, v]) => `<button type="button" class="${k === tab ? "active" : ""}" ${k === tab ? 'aria-current="page"' : ""} data-page-link="ia" data-sub="${k}">${esc(v)}</button>`).join("")}</nav>
+      <div id="ai-body" class="grid">${loadingHtml()}</div>`;
+  }
   const body = $("#ai-body");
-  await AiTabs[tab](body);
+  await AiTabs[sub](body);
   Charts.mountAll(body);
 };
 
@@ -39,7 +45,7 @@ async function mlStatus(force = false) {
 }
 
 function filterBar(id, cats, techs, values, extra = "") {
-  return `<form id="${id}" class="card toolbar">
+  return `<form id="${id}" class="card toolbar" aria-label="Filtros">
     ${extra}
     <label>Área<select name="area_id">${option("", "Todas")}${cats.areas.map((a) => option(a.id, a.name, values.area_id === a.id)).join("")}</select></label>
     <label>Categoría<select name="category_id">${option("", "Todas")}${cats.categories.map((c) => option(c.id, c.name, values.category_id === c.id)).join("")}</select></label>
@@ -60,34 +66,37 @@ const AiTabs = {
     const modelCard = (key, title, what) => {
       const m = meta?.models?.[key];
       const ok = m?.status === "trained";
-      return `<article class="card stack"><div class="row-between"><h3>${esc(title)}</h3>${m ? `<span class="pill ${ok ? "pill-real" : "st-en-espera"}">${ok ? "Entrenado" : "Datos insuficientes"}</span>` : '<span class="pill">Sin entrenar</span>'}</div>
-        <p class="muted small">${esc(what)}</p>${ok ? `<strong>${esc(m.headline || "")}</strong><span class="small muted">${esc(m.algorithm || "")}</span>` : m ? `<span class="small">${esc(m.message || "")}</span>` : ""}</article>`;
+      return `<article class="model"><div class="row-between"><h3>${esc(title)}</h3>${m ? `<span class="pill ${ok ? "pill-ok" : "st-en-espera"}"><span class="dot"></span>${ok ? "Entrenado" : "Datos insuficientes"}</span>` : '<span class="pill">Sin entrenar</span>'}</div>
+        <p class="muted small">${esc(what)}</p>${ok ? `<span class="headline">${esc(m.headline || "")}</span><span class="small muted">${esc(m.algorithm || "")}</span>` : m ? `<span class="small">${esc(m.message || "")}</span>` : ""}</article>`;
     };
     box.innerHTML = `
-      <section class="kpis">${kpi("Tickets en la base", ds.tickets_total.toLocaleString("es-PE"))}${kpi("Reales", ds.tickets_real.toLocaleString("es-PE"))}${kpi("Datos", ds.tickets_synthetic.toLocaleString("es-PE"), "Prefijo SYN-")}
+      <section class="kpis">${kpi("Tickets", ds.tickets_total.toLocaleString("es-PE"))}
         ${kpi("Procesados en el último entrenamiento", meta ? meta.data.tickets_used.toLocaleString("es-PE") : "—", meta ? `${meta.data.resolved.toLocaleString("es-PE")} resueltos` : "Sin entrenamiento")}
         ${kpi("Último entrenamiento", meta ? fmtDate(meta.trained_at) : "Nunca", meta ? `Versión ${meta.version}` : "")}</section>
-      <section class="card"><div class="card-head"><div><h2>Entrenar modelos</h2><p>Reentrena todos los modelos con los tickets actuales. Evaluación temporal: el 80 % más antiguo entrena y el 20 % más reciente evalúa.</p></div></div>
-        <form id="train-form" class="row"><label class="check"><input type="checkbox" name="include_synthetic" ${meta?.include_synthetic === false ? "" : "checked"}> Incluir Datos (SYN-)</label>
-          <button class="btn btn-primary" type="submit" ${s.training_in_progress ? "disabled" : ""}>${s.training_in_progress ? "Entrenamiento en curso…" : "Entrenar ahora"}</button></form>
-        <div id="train-result" style="margin-top:10px"></div></section>
-      <section class="grid grid-auto">
+      <section class="card"><div class="train-panel"><div><h2 style="font-size:16px">Entrenar modelos</h2><p class="muted small mt-8" style="max-width:72ch">Reentrena todos los modelos con los tickets actuales. Evaluación temporal: el 80 % más antiguo entrena y el 20 % más reciente evalúa.</p></div>
+        <form id="train-form"><label class="check"><input type="checkbox" name="include_synthetic" ${meta?.include_synthetic === false ? "" : "checked"}> Incluir tickets con prefijo SYN-</label>
+          <button class="btn btn-primary" type="submit" ${s.training_in_progress ? "disabled" : ""}>${icon("play", 15)} ${s.training_in_progress ? "Entrenamiento en curso…" : "Entrenar ahora"}</button></form></div>
+        <div id="train-result"></div></section>
+      <div class="section-head"><div><h2>Modelos</h2><p>Estado y métrica principal de cada modelo en el último entrenamiento.</p></div>
+        <button class="btn btn-secondary btn-sm" data-page-link="ia" data-sub="metricas">Ver métricas detalladas ${icon("arrow", 14)}</button></div>
+      <section class="model-grid">
         ${modelCard("resolution", "Tiempo de resolución", "Estima cuántas horas tardará un ticket en resolverse.")}
         ${modelCard("sla_risk", "Riesgo de incumplir SLA", "Probabilidad de que el ticket se resuelva fuera de plazo.")}
         ${modelCard("recommendation", "Recomendación de técnicos", "Ordena técnicos por riesgo y tiempo estimados, especialidad y carga.")}
         ${modelCard("forecast", "Proyección de demanda", "Pronostica el volumen diario de tickets de las próximas 4 semanas.")}
         ${modelCard("priority", "Prioridad sugerida", "Sugiere prioridad a partir del texto, área y categoría.")}
       </section>
-      ${s.history?.length ? `<section class="card"><div class="card-head"><h3>Historial de entrenamientos</h3></div><div class="table-wrap"><table class="table-compact"><thead><tr><th>Versión</th><th>Fecha</th><th>Por</th><th>Datos</th><th>Tickets</th><th>Resolución</th><th>Riesgo SLA</th></tr></thead><tbody>
-        ${s.history.map((h) => `<tr><td class="mono">${esc(h.version)}</td><td class="small">${fmtDate(h.trained_at)}</td><td>${esc(h.trained_by || "—")}</td><td><span class="pill">Datos</span></td>
+      ${s.history?.length ? `<section class="card card-flush"><div class="card-head"><h3>Historial de entrenamientos</h3></div><div class="table-wrap"><table class="table-compact"><thead><tr><th>Versión</th><th>Fecha</th><th>Por</th><th>Tickets</th><th>Resolución</th><th>Riesgo SLA</th></tr></thead><tbody>
+        ${s.history.map((h) => `<tr><td class="mono">${esc(h.version)}</td><td class="small">${fmtDate(h.trained_at)}</td><td>${esc(h.trained_by || "—")}</td>
           <td class="num">${(h.tickets || 0).toLocaleString("es-PE")}</td><td class="small">${esc(h.models?.resolution?.headline || h.models?.resolution?.status || "—")}</td><td class="small">${esc(h.models?.sla_risk?.headline || h.models?.sla_risk?.status || "—")}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
-      ${ds.tickets_total < 200 ? `<div class="banner banner-info"><span class="ico">ⓘ</span><div><b>¿Pocos datos?</b>En un entorno local puedes cargar el conjunto de 5.000 tickets con <span class="mono">python -m app.synthetic import</span> (ver docs/datos-sinteticos.md). Nunca se importa en bases remotas.</div></div>` : ""}`;
+      ${ds.tickets_total < 200 ? `<div class="banner banner-info"><span class="ico">${icon("info")}</span><div><b>¿Pocos datos?</b>En un entorno local puedes cargar el conjunto de 5.000 tickets con <span class="mono">python -m app.synthetic import</span> (ver docs/datos-sinteticos.md). Nunca se importa en bases remotas.</div></div>` : ""}`;
     $("#train-form").onsubmit = async (e) => {
       e.preventDefault();
       const btn = e.submitter;
       const out = $("#train-result");
       busy(btn, true, "Entrenando… (puede tardar unos segundos)");
       out.innerHTML = "";
+      out.classList.remove("mt-12");
       try {
         const meta2 = await post("/ml/train", { include_synthetic: e.target.include_synthetic.checked });
         const trained = Object.values(meta2.models).filter((m) => m.status === "trained").length;
@@ -95,7 +104,8 @@ const AiTabs = {
         mlStatusCache = null;
         route();
       } catch (error) {
-        out.innerHTML = `<div class="banner banner-crit"><span class="ico">⚠</span><div>${esc(error.message)}</div></div>`;
+        out.classList.add("mt-12");
+        out.innerHTML = banner("crit", "El entrenamiento falló", error.message);
         busy(btn, false);
       }
     };
@@ -125,17 +135,17 @@ const AiTabs = {
           ${Charts.hbars([...r.workload].sort((a, b) => a.historical_hours - b.historical_hours).map((w) => ({ label: w.name, value: w.historical_hours, display: `${w.historical_hours} h`,
             tip: `${w.name}\nPromedio: ${w.historical_hours} h\nFuera de SLA: ${pct(w.historical_breach_rate)}` })))}</article>
       </section>
-      <section class="card"><div class="card-head"><div><h3>Recomendaciones para la cola abierta</h3><p>Primero los tickets sin técnico, reabiertos o escalados. «Asignar» registra la asignación con el motivo del modelo.</p></div></div>
+      <section class="card card-flush"><div class="card-head"><div><h3>Recomendaciones para la cola abierta</h3><p>Primero los tickets sin técnico, reabiertos o escalados. «Asignar» registra la asignación con el motivo del modelo.</p></div></div>
         ${r.items.length ? `<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Estado</th><th>Actual</th><th>Mejor opción</th><th>Alternativas</th><th></th></tr></thead><tbody>
         ${r.items.map((it) => {
           const best = it.options[0];
-          return `<tr><td><button class="btn btn-link" data-action="open-ticket" data-id="${esc(it.id)}">${esc(it.number)}</button><span class="sub">${esc(it.title)} · ${esc(it.category)}</span></td>
+          return `<tr><td><button class="btn btn-link ticket-no" data-action="open-ticket" data-id="${esc(it.id)}">${esc(it.number)}</button><span class="sub">${esc(it.title)} · ${esc(it.category)}</span></td>
             <td>${statePill(it.state)} ${prioBadge(it.priority)}</td>
             <td>${it.current ? `${esc(it.current.name)}<span class="sub">riesgo ${pct(it.current.sla_risk)} · ${fmtHours(it.current.predicted_hours)}</span>` : '<span class="muted">Sin asignar</span>'}</td>
-            <td>${best ? `<strong>${esc(best.name)}</strong>${it.better_option ? ' <span class="pill pill-real">mejora</span>' : ""}<span class="sub">riesgo ${pct(best.sla_risk)} · ${fmtHours(best.predicted_hours)} · carga ${best.open_tickets}/${best.max_load}</span>` : '<span class="muted">Sin candidatos disponibles</span>'}</td>
+            <td>${best ? `<strong>${esc(best.name)}</strong>${it.better_option ? ' <span class="pill pill-ok">mejora</span>' : ""}<span class="sub">riesgo ${pct(best.sla_risk)} · ${fmtHours(best.predicted_hours)} · carga ${best.open_tickets}/${best.max_load}</span>` : '<span class="muted">Sin candidatos disponibles</span>'}</td>
             <td class="small">${it.options.slice(1).map((o) => `${esc(o.name)} (${pct(o.sla_risk)})`).join("<br>") || "—"}</td>
             <td>${best && (!it.current || best.technician_id !== it.current.technician_id) ? `<button class="btn btn-primary btn-sm" data-action="ml-assign" data-id="${esc(it.id)}" data-tech="${esc(best.technician_id)}" data-reason="${esc(`Recomendación ML (${r.model.version}): ${best.reason}`)}">Asignar</button>` : '<span class="muted small">Ya asignado al mejor</span>'}</td></tr>`;
-        }).join("")}</tbody></table></div>` : empty("No hay tickets abiertos", "Cuando existan tickets abiertos verás aquí las recomendaciones.")}</section>`;
+        }).join("")}</tbody></table></div>` : `<div style="padding:0 20px 20px">${empty("No hay tickets abiertos", "Cuando existan tickets abiertos verás aquí las recomendaciones.", "check")}</div>`}</section>`;
   },
 
   /* ----- Demand ----- */
@@ -189,8 +199,8 @@ const AiTabs = {
           <div class="form-grid"><label>Área<select name="area_id">${cats.areas.map((a) => option(a.id, a.name)).join("")}</select></label>
             <label>Categoría<select name="category_id">${cats.categories.map((c) => option(c.id, c.name, c.name === "Falla de hardware")).join("")}</select></label>
             <label class="full">Prioridad<select name="priority_id">${option("", "Usar la sugerida por el modelo")}${cats.priorities.map((p) => option(p.id, `${p.name} (SLA ${p.sla_hours} h)`)).join("")}</select></label></div>
-          <button class="btn btn-primary" type="submit">Calcular predicción</button></form></article>
-      <article class="card" id="sim-result"><div class="empty"><strong>Sin simulación</strong><span>Completa el formulario y pulsa «Calcular predicción».</span></div></article></section>`;
+          <div><button class="btn btn-primary" type="submit">${icon("play", 15)} Calcular predicción</button></div></form></article>
+      <article class="card" id="sim-result">${empty("Sin simulación", "Completa el formulario y pulsa «Calcular predicción».", "model")}</article></section>`;
     $("#sim-form").onsubmit = async (e) => {
       e.preventDefault();
       const out = $("#sim-result");
@@ -231,6 +241,7 @@ const AiTabs = {
         <article class="card"><div class="card-head"><div><h3>Tiempo de resolución</h3><p>${esc(res?.algorithm || "")}</p></div></div>
           ${res?.status === "trained" ? `${stat("MAE", `${res.metrics.mae_hours} h`, "error absoluto medio")}${stat("Mediana del error", `${res.metrics.median_ae_hours} h`)}
             ${stat("MAE de referencia", `${res.metrics.baseline_mae_hours} h`, res.metrics.baseline)}${stat("Mejora", `${res.metrics.improvement_vs_baseline_pct} %`)}
+            ${res.metrics.rmse_hours != null ? stat("RMSE", `${res.metrics.rmse_hours} h`, "raíz del error cuadrático medio") : ""}${res.metrics.r2_hours != null ? stat("R² (horas)", res.metrics.r2_hours) : ""}
             ${stat("R² (escala log)", res.metrics.r2_log)}${stat("Predicciones con error ≤ 50 %", pct(res.metrics.within_50pct))}${stat("Entrenamiento / evaluación", `${res.n_train} / ${res.n_test}`)}
             <div class="divider"></div><b class="small">Predicho vs. real (evaluación, escala logarítmica)</b>
             ${Charts.legend(["BAJA", "MEDIA", "ALTA", "CRITICA"].map((k, i) => ({ name: PRIORITY_LABEL[k], color: Charts.color(i), box: true })))}
@@ -264,10 +275,6 @@ const AiTabs = {
             <p class="small muted">${esc(rec.note)}</p>` : notTrained(rec)}</article>
       </section>`;
   },
-
-  async asistente(box) {
-    await renderAssistant(box);
-  },
 };
 
 async function loadRisk() {
@@ -280,16 +287,16 @@ async function loadRisk() {
     <section class="kpis">${kpi("Tickets abiertos analizados", s.open)}${kpi("Riesgo alto", s.high_risk, "Probabilidad ≥ 60 %", s.high_risk ? "crit" : "good")}
       ${kpi("Riesgo medio", s.medium_risk ?? 0, "30 – 60 %", s.medium_risk ? "warn" : "")}${kpi("Incumplimientos esperados", s.expected_breaches, "Suma de probabilidades")}
       ${kpi("Ya vencidos", s.overdue, "Hecho, no predicción", s.overdue ? "crit" : "")}${kpi("Tiempo medio estimado", fmtHours(s.avg_predicted_hours))}</section>
-    <section class="card"><div class="card-head"><div><h3>Tickets con mayor riesgo de incumplir el SLA</h3><p>Predicción del modelo ${esc(r.model.version)} con la información disponible al crear cada ticket. Los factores indican cuánto cambia el riesgo frente a un caso típico.</p></div></div>
+    <section class="card card-flush"><div class="card-head"><div><h3>Tickets con mayor riesgo de incumplir el SLA</h3><p>Predicción del modelo ${esc(r.model.version)} con la información disponible al crear cada ticket. Los factores indican cuánto cambia el riesgo frente a un caso típico.</p></div></div>
       ${r.tickets.length ? `<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Riesgo SLA</th><th>Tiempo estimado</th><th>Factores principales</th><th>Técnico recomendado</th></tr></thead><tbody>
       ${r.tickets.map((t) => `<tr class="clickable" data-action="open-ticket" data-id="${esc(t.id)}" tabindex="0">
-        <td><strong class="mono">${esc(t.number)}</strong><span class="sub">${esc(t.title)}</span><span class="sub">${esc(t.category)} · ${PRIORITY_LABEL[t.priority] || esc(t.priority)} · ${esc(STATE_LABEL[t.state] || t.state)} · ${esc(t.technician || "sin técnico")}</span></td>
+        <td><span class="ticket-no">${esc(t.number)}</span><span class="sub">${esc(t.title)}</span><span class="sub">${esc(t.category)} · ${PRIORITY_LABEL[t.priority] || esc(t.priority)} · ${esc(STATE_LABEL[t.state] || t.state)} · ${esc(t.technician || "sin técnico")}</span></td>
         <td>${riskBadge(t.sla_risk)}<div class="meter" style="margin-top:6px"><i style="width:${(t.sla_risk * 100).toFixed(0)}%;background:${t.sla_risk >= 0.6 ? "var(--crit)" : t.sla_risk >= 0.3 ? "var(--warn)" : "var(--good)"}"></i></div>
           ${t.overdue ? '<span class="sub" style="color:var(--crit-ink)">Plazo SLA ya vencido</span>' : `<span class="sub">Vence ${fmtDate(t.due_at)}</span>`}</td>
         <td class="num">${fmtHours(t.predicted_hours)}<span class="sub">Transcurrido ${fmtHours(t.elapsed_hours)} · restante ${fmtHours(t.predicted_remaining_hours)}</span></td>
         <td style="max-width:340px">${factorChips(t.factors)}</td>
         <td>${t.recommended ? `${esc(t.recommended.name)}<span class="sub">riesgo ${pct(t.recommended.sla_risk)} · ${fmtHours(t.recommended.predicted_hours)}</span>` : '<span class="muted">—</span>'}</td></tr>`).join("")}
-      </tbody></table></div>` : empty("No hay tickets abiertos con estos filtros")}</section>`;
+      </tbody></table></div>` : `<div style="padding:0 20px 20px">${empty("No hay tickets abiertos con estos filtros", "Ajusta los filtros para ver otras predicciones.", "search")}</div>`}</section>`;
 }
 
 async function loadPatterns() {
@@ -297,7 +304,7 @@ async function loadPatterns() {
   body.innerHTML = loadingHtml();
   let d;
   try { d = await api(`/ml/insights?${qs({ ...patternFilters, source: patternFilters.source === "all" ? "" : patternFilters.source })}`); }
-  catch (error) { body.innerHTML = `<div class="banner banner-crit"><span class="ico">⚠</span><div>${esc(error.message)}</div></div>`; return; }
+  catch (error) { body.innerHTML = banner("crit", "No se pudieron calcular los patrones", error.message); return; }
   const t = d.totals;
   const periodLabel = (p) => d.period === "month" ? p : `${p.slice(8, 10)}/${p.slice(5, 7)}`;
   const withBreach = d.by_period.filter((p) => p.breach_rate !== null);

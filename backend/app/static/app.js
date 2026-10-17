@@ -106,14 +106,50 @@ async function download(path, filename) {
 }
 
 /* ---------- UI helpers ---------- */
+/* One icon set, 24px grid, 1.8 stroke. Paths only; icon() wraps them in an aria-hidden SVG. */
+const ICONS = {
+  dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
+  tickets: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2.5a2.5 2.5 0 0 0 0 5V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2.5a2.5 2.5 0 0 0 0-5ZM14 5v14",
+  plus: "M12 5v14M5 12h14",
+  assistant: "M5 5h14a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-7l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1ZM8.5 10h7M8.5 13h4",
+  bell: "M6 10a6 6 0 1 1 12 0c0 4.5 1.5 6 2 6.5H4c.5-.5 2-2 2-6.5ZM10 20a2.2 2.2 0 0 0 4 0",
+  model: "M4 19h16M7 16V11M12 16V6M17 16v-3",
+  agents: "M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3M7 6h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1ZM10 10h4v4h-4z",
+  users: "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14.8c1.9.8 3 2.6 3 5.2",
+  sliders: "M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4",
+  history: "M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4M12 8v4l3 2",
+  download: "M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14",
+  alert: "M12 4 2.8 19.5h18.4ZM12 10v4M12 17h.01",
+  info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 11v5M12 8h.01",
+  check: "M5 12.5 10 17l9-10",
+  spark: "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18",
+  search: "M11 17.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM16 16l4 4",
+  inbox: "M4 13h4.5l1.5 2.5h4l1.5-2.5H20M5.5 5h13L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5Z",
+  left: "M14.5 6 8.5 12l6 6",
+  right: "M9.5 6l6 6-6 6",
+  arrow: "M5 12h14M13 6l6 6-6 6",
+  play: "M8 5.5v13l10.5-6.5Z",
+  clip: "M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5L20 14",
+  close: "M6 6l12 12M18 6 6 18",
+};
+const icon = (name, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name] || ICONS.info}"/></svg>`;
+const banner = (tone, title, text = "", extra = "") => `<div class="banner banner-${tone}"><span class="ico">${icon(tone === "crit" || tone === "warn" ? "alert" : "info")}</span><div>${title ? `<b>${esc(title)}</b>` : ""}${esc(text)}${extra}</div></div>`;
+
 function flash(message, error = false) {
   const zone = $("#flash");
   const item = document.createElement("div");
   item.className = `flash${error ? " error" : ""}`;
   item.setAttribute("role", error ? "alert" : "status");
-  item.textContent = message;
+  item.innerHTML = icon(error ? "alert" : "check");
+  item.append(document.createElement("span"));
+  item.lastChild.textContent = message;
   zone.appendChild(item);
   setTimeout(() => item.remove(), error ? 7000 : 4000);
+}
+
+function openModal(compact = false) {
+  modal.classList.toggle("compact", compact);
+  if (!modal.open) modal.showModal();
 }
 
 function setTitle(title, note = "") {
@@ -138,7 +174,6 @@ function statePill(code) {
 function prioBadge(code) {
   return `<span class="prio"><i style="background:${PRIORITY_COLOR[code] || "var(--faint)"}"></i>${esc(PRIORITY_LABEL[code] || code || "—")}</span>`;
 }
-const synBadge = (flag) => flag ? '<span class="pill" title="Registro del conjunto de datos (prefijo SYN-)">Datos</span>' : "";
 function riskBadge(p) {
   const level = p >= 0.6 ? "alto" : p >= 0.3 ? "medio" : "bajo";
   const icon = { alto: "▲", medio: "●", bajo: "▼" }[level];
@@ -150,8 +185,11 @@ function slaLeft(ticket) {
   return hours < 0 ? `<span class="risk risk-alto">Vencido hace ${fmtHours(-hours)}</span>`
     : `<span class="risk ${hours < 4 ? "risk-medio" : "risk-bajo"}">Vence en ${fmtHours(hours)}</span>`;
 }
-const empty = (title, text = "") => `<div class="empty"><strong>${esc(title)}</strong>${text ? `<span>${esc(text)}</span>` : ""}</div>`;
-const loadingHtml = (text = "Cargando…") => `<div class="loading"><span class="spinner"></span>${esc(text)}</div>`;
+const empty = (title, text = "", ico = "inbox") => `<div class="empty"><span class="empty-ico">${icon(ico)}</span><strong>${esc(title)}</strong>${text ? `<span>${esc(text)}</span>` : ""}</div>`;
+const loadingHtml = (text = "Cargando…") => `<div class="loading" aria-busy="true"><div class="loading-text"><span class="spinner"></span>${esc(text)}</div>
+  <div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div></div>`;
+const pageSkeleton = () => `<div class="loading" aria-busy="true" aria-label="Cargando"><div class="skel skel-strip"></div>
+  <div class="skel-row"><div class="skel skel-block"></div><div class="skel skel-block"></div></div><div class="skel skel-block"></div></div>`;
 const option = (value, label, selected = false) => `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
 
 function busy(button, on, text) {
@@ -174,23 +212,27 @@ async function loadCatalogs(force = false) {
 }
 
 /* ---------- Navigation ---------- */
+/* Nav items: [page, label, icon, sub?]. "Agentes" is a sub-route of the ML page (#/ia/agentes). */
 function navItems() {
   const role = App.me.role;
-  const groups = [{ title: "Operación", items: [["dashboard", "Panel", "▦"], ["tickets", role === "TECNICO" ? "Mis tickets" : role === "USUARIO" ? "Mis solicitudes" : "Tickets", "▤"]] }];
-  if (role === "USUARIO") groups[0].items.push(["newticket", "Nueva solicitud", "＋"]);
-  groups[0].items.push(["assistant", "Asistente", "✦"], ["notifications", "Notificaciones", "◉"]);
-  if (isSupervisor()) groups.push({ title: "Inteligencia artificial", items: [["ia", "Centro de IA", "◈"]] });
+  const groups = [{ title: "Operación", items: [["dashboard", "Panel", "dashboard"], ["tickets", role === "TECNICO" ? "Mis tickets" : role === "USUARIO" ? "Mis solicitudes" : "Tickets", "tickets"]] }];
+  if (role === "USUARIO") groups[0].items.push(["newticket", "Nueva solicitud", "plus"]);
+  groups[0].items.push(["assistant", "Asistente", "assistant"], ["notifications", "Notificaciones", "bell"]);
+  if (isSupervisor()) groups.push({ title: "Inteligencia artificial", items: [["ia", "Machine Learning", "model"], ["ia", "Agentes y monitor", "agents", "agentes"]] });
   const manage = [];
-  if (role === "ADMIN") manage.push(["admin", "Usuarios y catálogos", "⚙"], ["settings", "Reglas de asignación", "⚖"]);
-  if (isSupervisor()) manage.push(["audit", "Auditoría", "◷"], ["reports", "Reportes", "⇩"]);
+  if (role === "ADMIN") manage.push(["admin", "Usuarios y catálogos", "users"], ["settings", "Reglas de asignación", "sliders"]);
+  if (isSupervisor()) manage.push(["audit", "Auditoría", "history"], ["reports", "Reportes", "download"]);
   if (manage.length) groups.push({ title: "Gestión", items: manage });
   return groups;
 }
 
+const initials = (name) => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+
 function renderNav() {
   $("#nav").innerHTML = navItems().map((g) => `<div class="nav-group">${esc(g.title)}</div>` +
-    g.items.map(([id, name, icon]) => `<button type="button" data-page="${id}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${esc(name)}</span></button>`).join("")).join("");
-  $("#identity").innerHTML = `<b>${esc(App.me.full_name)}</b><small>${esc(ROLE_LABEL[App.me.role] || App.me.role)}</small>`;
+    g.items.map(([id, name, ico, sub = ""]) => `<button type="button" class="nav-link" data-page="${id}" data-sub="${sub}">${icon(ico)}<span>${esc(name)}</span></button>`).join("")).join("");
+  $("#identity").innerHTML = `<span class="avatar" aria-hidden="true">${esc(initials(App.me.full_name))}</span>
+    <span class="identity-text"><b>${esc(App.me.full_name)}</b><small>${esc(ROLE_LABEL[App.me.role] || App.me.role)}</small></span>`;
 }
 
 function allowedPages() {
@@ -209,16 +251,21 @@ async function route() {
   const allowed = allowedPages();
   const name = allowed.has(page) && Pages[page] ? page : "dashboard";
   App.page = name;
-  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
+  const navSub = name === "ia" && sub === "agentes" ? "agentes" : "";
+  $$("#nav [data-page]").forEach((b) => {
+    const on = b.dataset.page === name && (b.dataset.sub || "") === navSub;
+    b.classList.toggle("active", on);
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
   $("#app").classList.remove("menu-open");
   const content = $("#content");
-  content.innerHTML = loadingHtml();
+  content.innerHTML = pageSkeleton();
   try {
     await Pages[name](content, sub);
     Charts.mountAll(content);
   } catch (error) {
     console.error(error);
-    content.innerHTML = `<div class="banner banner-crit"><span class="ico">⚠</span><div><b>No se pudo cargar esta sección</b>${esc(error.message)}</div></div>`;
+    content.innerHTML = banner("crit", "No se pudo cargar esta sección", error.message, `<button class="btn btn-secondary btn-sm" data-action="retry">Reintentar</button>`);
   }
 }
 
@@ -262,11 +309,11 @@ Pages.dashboard = async (root) => {
     const { data: mine } = await apiWithTotal("/tickets?limit=6");
     root.innerHTML = `
       <section class="hero"><div><h2>¿Tienes un problema con tu equipo o sistema?</h2><p>Cuéntanos qué pasa y te asignaremos un técnico especializado. Podrás seguir el avance desde aquí.</p></div>
-        <button class="btn" data-page-link="newticket">＋ Nueva solicitud</button></section>
+        <button class="btn btn-primary btn-lg" data-page-link="newticket">${icon("plus", 16)} Nueva solicitud</button></section>
       <section class="kpis">${kpi("Solicitudes abiertas", openTotal, "En proceso")}${kpi("Esperando tu confirmación", c.RESUELTO || 0, "Revisa la solución", c.RESUELTO ? "warn" : "")}
         ${kpi("Cerradas", c.CERRADO || 0, "Solucionadas")}${kpi("Satisfacción del servicio", d.satisfaction ? `${d.satisfaction}/5` : "—", "Promedio de todos los usuarios")}</section>
-      <section class="card"><div class="card-head"><div><h2>Mis solicitudes recientes</h2><p>Toca una solicitud para ver el detalle, comentar o calificar.</p></div>
-        <button class="btn btn-secondary btn-sm" data-page-link="tickets">Ver todas</button></div>${ticketList(mine)}</section>`;
+      <section class="card"><div class="card-head"><div><h2>Mis solicitudes recientes</h2><p>Abre una solicitud para ver el detalle, comentar o calificar.</p></div>
+        <button class="btn btn-secondary btn-sm" data-page-link="tickets">Ver todas ${icon("arrow", 14)}</button></div>${ticketList(mine)}</section>`;
     return;
   }
   if (role === "TECNICO") {
@@ -277,56 +324,84 @@ Pages.dashboard = async (root) => {
     root.innerHTML = `
       <section class="kpis">${kpi("Por aceptar", c.ASIGNADO || 0, "Asignados a ti", c.ASIGNADO ? "warn" : "")}${kpi("En atención", c.EN_ATENCION || 0)}
         ${kpi("En espera", c.EN_ESPERA || 0)}${kpi("Vencidos", d.overdue, "Fuera de SLA", d.overdue ? "crit" : "good")}
-        ${kpi("Resueltos", (c.RESUELTO || 0) + (c.CERRADO || 0))}${kpi("Resolución media", fmtHours(d.avg_resolution_hours))}</section>
-      <section class="card"><div class="card-head"><div><h2>Mi cola por vencimiento</h2><p>Los tickets más urgentes aparecen primero.</p></div></div>
-        ${pending.length ? ticketTable(pending.slice(0, 15), { showSla: true }) : empty("No tienes tickets pendientes", "¡Buen trabajo!")}</section>
-      ${perf ? `<section class="card"><div class="card-head"><h2>Mi desempeño</h2></div><div class="kpis">${kpi("Asignados", perf.assigned)}${kpi("Resueltos", perf.resolved)}${kpi("Calificación", perf.rating ? `${perf.rating}/5` : "—")}</div></section>` : ""}`;
+        ${kpi("Resueltos", (c.RESUELTO || 0) + (c.CERRADO || 0))}${kpi("Resolución media", fmtHours(d.avg_resolution_hours))}
+        ${perf ? kpi("Mi calificación", perf.rating ? `${perf.rating}/5` : "—", `${perf.resolved} de ${perf.assigned} resueltos`) : ""}</section>
+      <section class="card card-flush"><div class="card-head"><div><h2>Mi cola por vencimiento</h2><p>Los tickets con el plazo más próximo aparecen primero.</p></div>
+        <button class="btn btn-secondary btn-sm" data-page-link="tickets">Ver todos ${icon("arrow", 14)}</button></div>
+        ${pending.length ? ticketTable(pending.slice(0, 15), { showSla: true }) : empty("No tienes tickets pendientes", "Cuando te asignen un ticket aparecerá aquí.", "check")}</section>`;
     return;
   }
   setTitle("Panel de control", "Visión general de la operación de soporte");
   const trendDays = Object.entries(d.trend || {});
   const monthly = Object.entries(d.trend_monthly || {});
   const total = d.total || 1;
+  const techRows = [...(d.technician_performance || [])].sort((a, b) => b.assigned - a.assigned);
   root.innerHTML = `
     <section class="kpis">${kpi("Tickets totales", d.total.toLocaleString("es-PE"))}${kpi("Abiertos", openTotal.toLocaleString("es-PE"), "Nuevos, asignados o en curso")}
       ${kpi("Vencidos", d.overdue, "Abiertos fuera de SLA", d.overdue ? "crit" : "good")}${kpi("Alta / crítica", d.critical.toLocaleString("es-PE"), "Prioridad elevada")}
       ${kpi("Primera atención", fmtHours(d.avg_attention_hours), "Promedio")}${kpi("Resolución", fmtHours(d.avg_resolution_hours), "Promedio")}
       ${kpi("Satisfacción", d.satisfaction ? `${d.satisfaction}/5` : "—", "Calificación media")}</section>
-    <section class="grid grid-2">
-      <article class="card"><div class="card-head"><div><h3>Tickets creados · últimos 30 días</h3><p>Volumen diario</p></div></div>
-        ${Charts.columns({ items: trendDays.map(([k, v]) => ({ label: k, value: v, tip: `${fmtDay(k + "T12:00:00")}\n${v} tickets` })), xLabel: (k) => k.slice(8) + "/" + k.slice(5, 7), height: 220, label: "Tickets por día" })}
+    <section class="dash">
+      <article class="card span-8"><div class="card-head"><div><h3>Tickets creados en los últimos 30 días</h3><p>Volumen diario</p></div></div>
+        ${Charts.columns({ items: trendDays.map(([k, v]) => ({ label: k, value: v, tip: `${fmtDay(k + "T12:00:00")}\n${v} tickets` })), xLabel: (k) => k.slice(8) + "/" + k.slice(5, 7), height: 240, label: "Tickets por día" })}
         ${Charts.dataTable(["Día", "Tickets"], trendDays)}</article>
-      <article class="card"><div class="card-head"><div><h3>Tendencia mensual · 12 meses</h3><p>Tickets creados por mes (el mes en curso está incompleto)</p></div></div>
-        ${Charts.line({ labels: monthly.map(([k]) => k), series: [{ name: "Tickets", color: "var(--c1)", values: monthly.map(([, v]) => v) }], height: 220, format: (v) => Charts.fmtNum(v), label: "Tickets por mes" })}
+      <article class="card span-4"><div class="card-head"><div><h3>Por estado</h3><p>${d.total.toLocaleString("es-PE")} tickets registrados</p></div></div>
+        ${Charts.hbars(Object.entries(d.by_state || {}).map(([k, v]) => ({ label: STATE_LABEL[k] || k, value: v, display: v.toLocaleString("es-PE"), tip: `${STATE_LABEL[k] || k}
+${v} (${pct(v / total, 1)})` })))}
+        <div class="divider" style="margin:18px 0 16px"></div><div class="card-head"><h3>Por prioridad</h3></div>
+        ${Charts.hbars(["BAJA", "MEDIA", "ALTA", "CRITICA"].filter((k) => d.by_priority?.[k] !== undefined).map((k) => ({ label: PRIORITY_LABEL[k], value: d.by_priority[k], color: PRIORITY_COLOR[k], display: d.by_priority[k].toLocaleString("es-PE") })))}</article>
+      <article class="card span-8"><div class="card-head"><div><h3>Tendencia mensual</h3><p>Tickets creados por mes en los últimos 12 meses (el mes en curso está incompleto)</p></div></div>
+        ${Charts.line({ labels: monthly.map(([k]) => k), series: [{ name: "Tickets", color: "var(--c1)", values: monthly.map(([, v]) => v) }], height: 240, format: (v) => Charts.fmtNum(v), label: "Tickets por mes" })}
         ${Charts.dataTable(["Mes", "Tickets"], monthly)}</article>
-    </section>
-    <section class="grid grid-3">
-      <article class="card"><div class="card-head"><h3>Por estado</h3></div>${Charts.hbars(Object.entries(d.by_state || {}).map(([k, v]) => ({ label: STATE_LABEL[k] || k, value: v, display: v.toLocaleString("es-PE"), tip: `${STATE_LABEL[k] || k}\n${v} (${pct(v / total, 1)})` })))}</article>
-      <article class="card"><div class="card-head"><h3>Por prioridad</h3></div>${Charts.hbars(["BAJA", "MEDIA", "ALTA", "CRITICA"].filter((k) => d.by_priority?.[k] !== undefined).map((k) => ({ label: PRIORITY_LABEL[k], value: d.by_priority[k], color: PRIORITY_COLOR[k], display: d.by_priority[k].toLocaleString("es-PE") })))}</article>
-      <article class="card"><div class="card-head"><h3>Por área</h3></div>${Charts.hbars(Object.entries(d.by_area || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: k, value: v, display: v.toLocaleString("es-PE") })))}</article>
-    </section>
-    <section class="grid grid-2">
-      <article class="card"><div class="card-head"><h3>Por categoría</h3></div>${Charts.hbars(Object.entries(d.by_category || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => ({ label: k, value: v, display: v.toLocaleString("es-PE") })))}</article>
-      <article class="card"><div class="card-head"><div><h3>Rendimiento de técnicos</h3><p>Tickets asignados, resueltos y calificación</p></div></div>
-        ${(d.technician_performance || []).length ? `<div class="table-wrap"><table class="table-compact"><thead><tr><th>Técnico</th><th>Asignados</th><th>Resueltos</th><th>Calificación</th></tr></thead><tbody>
-        ${d.technician_performance.sort((a, b) => b.assigned - a.assigned).map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${p.assigned}</td><td class="num">${p.resolved}</td><td class="num">${p.rating ? p.rating + "/5" : "—"}</td></tr>`).join("")}</tbody></table></div>` : empty("Sin técnicos registrados")}
+      <article class="card span-4"><div class="card-head"><h3>Por área</h3></div>
+        ${Charts.hbars(Object.entries(d.by_area || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: k, value: v, display: v.toLocaleString("es-PE") })))}</article>
+      <article class="card card-flush span-12" id="dash-risk"><div class="card-head"><div><h3>Tickets abiertos con mayor riesgo de incumplir el SLA</h3><p>Predicción del modelo de Machine Learning</p></div>
+        <button class="btn btn-secondary btn-sm" data-page-link="ia" data-sub="riesgo">Ver análisis completo ${icon("arrow", 14)}</button></div>
+        <div id="dash-risk-body" style="padding:0 20px 20px">${loadingHtml("Consultando el modelo…")}</div></article>
+      <article class="card span-6"><div class="card-head"><h3>Por categoría</h3></div>
+        ${Charts.hbars(Object.entries(d.by_category || {}).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => ({ label: k, value: v, display: v.toLocaleString("es-PE") })))}</article>
+      <article class="card card-flush span-6"><div class="card-head"><div><h3>Rendimiento de técnicos</h3><p>Tickets asignados, resueltos y calificación</p></div></div>
+        ${techRows.length ? `<div class="table-wrap"><table class="table-compact"><thead><tr><th>Técnico</th><th>Asignados</th><th>Resueltos</th><th>Calificación</th></tr></thead><tbody>
+        ${techRows.map((p) => `<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.assigned}</td><td class="num">${p.resolved}</td><td class="num">${p.rating ? p.rating + "/5" : "—"}</td></tr>`).join("")}</tbody></table></div>` : empty("Sin técnicos registrados")}
       </article>
-    </section>
-    <section class="banner banner-info"><span class="ico">◈</span><div><b>Centro de Inteligencia Artificial</b>Predicciones de tiempos, riesgo de SLA, recomendaciones de técnicos y proyección de demanda.
-      <div style="margin-top:8px"><button class="btn btn-primary btn-sm" data-page-link="ia">Abrir Centro de IA</button></div></div></section>`;
+    </section>`;
+  loadDashboardRisk();
 };
+
+/* Supervisor dashboard: top open tickets by predicted SLA risk (real model output, loaded after the page). */
+async function loadDashboardRisk() {
+  const box = $("#dash-risk-body");
+  if (!box) return;
+  try {
+    const r = await api("/ml/predictions?limit=6");
+    if (!$("#dash-risk-body")) return;
+    const s = r.summary;
+    box.parentElement.querySelector(".card-head p").textContent = `Modelo ${r.model.version} · ${s.open} abiertos analizados · ${s.high_risk} con riesgo alto · ${s.overdue} ya vencidos`;
+    box.style.padding = "0";
+    box.innerHTML = r.tickets.length ? `<div class="table-wrap" style="border:0;border-top:1px solid var(--line);border-radius:0"><table class="table-compact"><thead><tr><th>Ticket</th><th>Riesgo SLA</th><th>Tiempo estimado</th><th>Plazo</th><th>Técnico</th></tr></thead><tbody>
+      ${r.tickets.slice(0, 6).map((t) => `<tr class="clickable" data-action="open-ticket" data-id="${esc(t.id)}" tabindex="0"><td><span class="ticket-no">${esc(t.number)}</span><span class="sub">${esc(t.title)}</span></td>
+        <td>${riskBadge(t.sla_risk)}</td><td class="num">${fmtHours(t.predicted_hours)}</td>
+        <td class="small">${t.overdue ? '<span class="risk risk-alto">Vencido</span>' : fmtDate(t.due_at)}</td><td>${esc(t.technician || "Sin asignar")}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div style="padding:0 20px 20px">${empty("No hay tickets abiertos", "Cuando existan tickets abiertos verás aquí su riesgo estimado.", "check")}</div>`;
+  } catch (error) {
+    if (!$("#dash-risk-body")) return;
+    box.innerHTML = error.status === 409
+      ? banner("info", "Modelo sin entrenar", "Entrena los modelos para ver el riesgo estimado de los tickets abiertos.", `<div><button class="btn btn-primary btn-sm" data-page-link="ia" data-sub="resumen">Ir a entrenamiento</button></div>`)
+      : banner("warn", "", error.message);
+  }
+}
 
 function ticketList(rows) {
   if (!rows.length) return empty("Aún no tienes solicitudes", "Cuando registres una solicitud aparecerá aquí.");
   return `<div class="list">${rows.map((t) => `<div class="list-item clickable" data-action="open-ticket" data-id="${esc(t.id)}" role="button" tabindex="0">
-    <div><strong>${esc(t.title)}</strong><div class="small muted">${esc(t.number)} · ${fmtDate(t.created_at)} · ${esc(t.technician?.name || "Buscando técnico")}</div></div>
-    <div class="row">${statePill(t.state)}</div></div>`).join("")}</div>`;
+    <div><strong>${esc(t.title)}</strong><div class="small muted"><span class="ticket-no">${esc(t.number)}</span> · ${fmtDate(t.created_at)} · ${esc(t.technician?.name || "Buscando técnico")}</div></div>
+    <div class="row">${statePill(t.state)}${icon("right", 16)}</div></div>`).join("")}</div>`;
 }
 
 function ticketTable(rows, opts = {}) {
-  if (!rows.length) return empty("No hay tickets con estos filtros");
+  if (!rows.length) return empty("No hay tickets con estos filtros", "Prueba con otro término de búsqueda o quita algún filtro.", "search");
   return `<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Solicitud</th><th>Estado</th><th>Prioridad</th>${opts.showSla ? "<th>SLA</th>" : ""}<th>Técnico</th><th>Creado</th></tr></thead><tbody>
-    ${rows.map((t) => `<tr class="clickable" data-action="open-ticket" data-id="${esc(t.id)}" tabindex="0"><td><strong class="mono">${esc(t.number)}</strong></td>
+    ${rows.map((t) => `<tr class="clickable" data-action="open-ticket" data-id="${esc(t.id)}" tabindex="0"><td><span class="ticket-no">${esc(t.number)}</span></td>
       <td><strong>${esc(t.title)}</strong><span class="sub">${esc(t.category?.name || "")} · ${esc(t.area?.name || "")}</span></td><td>${statePill(t.state)}</td><td>${prioBadge(t.priority?.code)}</td>
       ${opts.showSla ? `<td>${slaLeft(t)}</td>` : ""}<td>${esc(t.technician?.name || "Sin asignar")}</td><td class="small">${fmtDate(t.created_at)}</td></tr>`).join("")}
   </tbody></table></div>`;
@@ -340,14 +415,14 @@ Pages.tickets = async (root) => {
   setTitle(role === "TECNICO" ? "Mis tickets" : role === "USUARIO" ? "Mis solicitudes" : "Tickets", "Busca, filtra y abre cualquier ticket para gestionarlo");
   const cats = await loadCatalogs();
   root.innerHTML = `
-    <section class="card"><form id="ticket-filters" class="toolbar">
-      <label class="search">Buscar<input name="q" placeholder="Número o título" value="${esc(ticketFilters.q)}"></label>
+    <section class="card"><form id="ticket-filters" class="toolbar" role="search">
+      <label class="search">Buscar<input name="q" type="search" placeholder="Número o título" value="${esc(ticketFilters.q)}"></label>
       <label>Estado<select name="state_code"><option value="">Todos</option>${Object.entries(STATE_LABEL).map(([k, v]) => option(k, v, ticketFilters.state_code === k)).join("")}</select></label>
       <label>Prioridad<select name="priority_code"><option value="">Todas</option>${cats.priorities.map((p) => option(p.code, p.name, ticketFilters.priority_code === p.code)).join("")}</select></label>
       <label>Categoría<select name="category_id"><option value="">Todas</option>${cats.categories.map((c) => option(c.id, c.name, ticketFilters.category_id === c.id)).join("")}</select></label>
       ${isSupervisor() ? `<label>Datos<select name="source">${option("all", "Todos", ticketFilters.source === "all")}${option("real", "Sin prefijo SYN-", ticketFilters.source === "real")}${option("synthetic", "Prefijo SYN-", ticketFilters.source === "synthetic")}</select></label>` : ""}
       <button class="btn btn-primary" type="submit">Aplicar</button>
-      ${role === "USUARIO" ? '<button class="btn btn-secondary" type="button" data-page-link="newticket">＋ Nueva solicitud</button>' : ""}
+      ${role === "USUARIO" ? `<button class="btn btn-secondary" type="button" data-page-link="newticket">${icon("plus", 16)} Nueva solicitud</button>` : ""}
     </form></section>
     <section id="ticket-results">${loadingHtml()}</section>`;
   $("#ticket-filters").onsubmit = (e) => {
@@ -367,12 +442,12 @@ async function loadTicketResults() {
   try {
     const { data, total } = await apiWithTotal(`/tickets?${params}`);
     const from = total ? ticketFilters.offset + 1 : 0, to = ticketFilters.offset + data.length;
-    box.innerHTML = `${ticketTable(data, { showSla: App.me.role !== "USUARIO" })}
-      <div class="pager"><span class="muted small">${from}–${to} de ${total.toLocaleString("es-PE")}</span>
-        <button class="btn btn-secondary btn-sm" data-action="ticket-page" data-dir="-1" ${ticketFilters.offset <= 0 ? "disabled" : ""}>← Anterior</button>
-        <button class="btn btn-secondary btn-sm" data-action="ticket-page" data-dir="1" ${to >= total ? "disabled" : ""}>Siguiente →</button></div>`;
+    box.innerHTML = `<div class="card card-flush">${ticketTable(data, { showSla: App.me.role !== "USUARIO" })}</div>
+      ${total ? `<div class="pager"><span class="muted small num">Mostrando ${from}–${to} de ${total.toLocaleString("es-PE")}</span><div class="row">
+        <button class="btn btn-secondary btn-sm" data-action="ticket-page" data-dir="-1" ${ticketFilters.offset <= 0 ? "disabled" : ""}>${icon("left", 15)} Anterior</button>
+        <button class="btn btn-secondary btn-sm" data-action="ticket-page" data-dir="1" ${to >= total ? "disabled" : ""}>Siguiente ${icon("right", 15)}</button></div></div>` : ""}`;
   } catch (error) {
-    box.innerHTML = `<div class="banner banner-crit"><span class="ico">⚠</span><div>${esc(error.message)}</div></div>`;
+    box.innerHTML = banner("crit", "No se pudieron cargar los tickets", error.message);
   }
 }
 
@@ -385,7 +460,7 @@ Pages.newticket = async (root) => {
   setTitle("Nueva solicitud", "Describe el problema con tus palabras; nosotros nos encargamos del resto");
   const cats = await loadCatalogs();
   root.innerHTML = `
-    <section class="card" style="max-width:860px"><div class="card-head"><div><span class="eyebrow">Paso único</span><h2>¿Qué está pasando?</h2>
+    <section class="card" style="max-width:860px"><div class="card-head"><div><h2>¿Qué está pasando?</h2>
       <p>Cuanto más claro sea el detalle, más rápido podremos ayudarte.</p></div></div>
       <form id="ticket-form">
         <label>Resumen del problema<input name="title" required minlength="5" maxlength="180" placeholder="Ej.: La impresora del piso 2 no imprime"></label>
@@ -397,8 +472,33 @@ Pages.newticket = async (root) => {
           <label class="full">¿Qué tan urgente es?<select name="priority_id">${option("", "No estoy seguro (la definirá el sistema)")}${cats.priorities.map((p) => option(p.id, `${p.name} — atención en máximo ${p.sla_hours} h`)).join("")}</select>
             <span class="hint">Crítica: el trabajo está detenido para varias personas. Baja: es una molestia menor.</span></label>
         </div>
-        <div class="row-between"><span class="muted small">Recibirás notificaciones cuando cambie el estado.</span><button class="btn btn-primary" type="submit">Enviar solicitud</button></div>
+        <div class="row"><button class="btn btn-secondary btn-sm" type="button" id="triage-btn">${icon("spark", 15)} Sugerir tipo y urgencia</button><span class="muted small">El agente de triage analiza tu texto; no se guarda.</span></div>
+        <div id="triage-out"></div>
+        <div class="form-foot"><span class="muted small">Recibirás notificaciones cuando cambie el estado.</span><button class="btn btn-primary" type="submit">Enviar solicitud</button></div>
       </form></section>`;
+  $("#triage-btn").onclick = async (e) => {
+    const form = $("#ticket-form");
+    const out = $("#triage-out");
+    const btn = e.currentTarget;
+    if (form.title.value.trim().length < 3) { flash("Escribe primero un resumen del problema.", true); return; }
+    busy(btn, true, "Analizando…");
+    try {
+      const s = await post("/agents/triage/suggest", { title: form.title.value, description: form.description.value, area_id: form.area_id.value });
+      const prio = s.priority && cats.priorities.find((p) => p.code === s.priority.code);
+      const cat = s.category?.id && cats.categories.find((c) => c.id === s.category.id && c.active);
+      out.innerHTML = prio || cat ? `<div class="banner banner-info"><span class="ico">${icon("spark")}</span><div><b>Sugerencia del agente de triage</b>
+          ${cat ? `Tipo de problema: <strong>${esc(cat.name)}</strong> (${pct(s.category.confidence)} de los casos similares). ` : ""}
+          ${prio ? `Urgencia: <strong>${esc(prio.name)}</strong> (probabilidad ${pct(s.priority.probabilities[prio.code])}).` : ""}
+          <div><button type="button" class="btn btn-primary btn-sm" id="triage-apply">Aplicar sugerencia</button></div></div></div>`
+        : banner("warn", "", "No hay suficiente información para sugerir. Elige el tipo y la urgencia manualmente.");
+      const apply = $("#triage-apply");
+      if (apply) apply.onclick = () => {
+        if (cat) form.category_id.value = cat.id;
+        if (prio) form.priority_id.value = prio.id;
+        flash("Sugerencia aplicada. Puedes cambiarla antes de enviar.");
+      };
+    } catch (error) { flash(error.message, true); } finally { busy(btn, false); }
+  };
   $("#ticket-form").onsubmit = async (e) => {
     e.preventDefault();
     const btn = e.submitter;
@@ -417,13 +517,13 @@ Pages.newticket = async (root) => {
 
 /* ---------- Ticket detail ---------- */
 async function openTicket(id) {
-  modal.showModal();
+  openModal();
   $("#modal-content").innerHTML = loadingHtml("Cargando ticket…");
   try {
     const t = await api(`/tickets/${id}`);
     renderTicket(t);
   } catch (error) {
-    $("#modal-content").innerHTML = `<div class="modal-head"><h2>No se pudo abrir el ticket</h2><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">✕</button></div><div class="modal-body">${esc(error.message)}</div>`;
+    $("#modal-content").innerHTML = `<div class="modal-head"><h2>No se pudo abrir el ticket</h2><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">${icon("close", 20)}</button></div><div class="modal-body">${banner("crit", "", error.message)}</div>`;
   }
 }
 Actions["open-ticket"] = (el) => openTicket(el.dataset.id);
@@ -450,9 +550,9 @@ function ticketActions(t) {
 function renderTicket(t) {
   const canSuggest = ["ADMIN", "JEFE_TI", "TECNICO"].includes(App.me.role);
   $("#modal-content").innerHTML = `
-    <div class="modal-head"><div><span class="eyebrow">Ticket ${esc(t.number)}</span><h2>${esc(t.title)}</h2>
-      <div class="row" style="margin-top:6px">${statePill(t.state)} ${prioBadge(t.priority?.code)} ${synBadge(t.synthetic)} ${slaLeft(t)}</div></div>
-      <button class="icon-btn" data-action="close-modal" aria-label="Cerrar">✕</button></div>
+    <div class="modal-head"><div><span class="eyebrow mono">${esc(t.number)}</span><h2>${esc(t.title)}</h2>
+      <div class="row mt-8">${statePill(t.state)} ${prioBadge(t.priority?.code)} ${slaLeft(t)}</div></div>
+      <button class="icon-btn" data-action="close-modal" aria-label="Cerrar">${icon("close", 20)}</button></div>
     <div class="modal-body">
       <div class="summary-grid">
         <div><span>Solicitante</span><strong>${esc(t.requester?.full_name)}</strong></div>
@@ -466,21 +566,21 @@ function renderTicket(t) {
       </div>
       <div><div class="section-title">Descripción</div><div class="description">${esc(t.description)}</div></div>
       ${(t.diagnosis || t.solution) ? `<div class="grid grid-2"><div class="subpanel"><b>Diagnóstico</b><span>${esc(t.diagnosis || "Pendiente")}</span></div><div class="subpanel"><b>Solución</b><span>${esc(t.solution || "Pendiente")}</span></div></div>` : ""}
-      <div class="actions">${ticketActions(t)}</div>
+      ${ticketActions(t) ? `<div class="actions">${ticketActions(t)}</div>` : ""}
       <div id="ticket-panel"></div>
-      <div class="subpanel"><div class="row-between"><div class="section-title">✦ Ayuda de IA</div><span class="muted small">Las respuestas del asistente requieren un proveedor LLM configurado</span></div>
+      <div class="subpanel"><div class="row-between"><div class="section-title" style="margin:0">${icon("spark", 16)} Ayuda de IA</div><span class="muted small">El resumen y el diagnóstico usan el proveedor LLM configurado</span></div>
         <div class="actions"><button class="btn btn-secondary btn-sm" data-action="ai-summary" data-id="${esc(t.id)}">Resumir ticket</button>
           ${canSuggest ? `<button class="btn btn-secondary btn-sm" data-action="ai-suggest" data-id="${esc(t.id)}">Sugerir diagnóstico</button>` : ""}
           ${isSupervisor() ? `<button class="btn btn-secondary btn-sm" data-action="ml-ticket" data-id="${esc(t.id)}">Predicción ML</button>` : ""}</div>
         <div id="ai-output"></div></div>
       <div><div class="section-title">Comentarios <span class="pill">${(t.comments || []).length}</span></div>
-        <div class="stack" style="margin-top:8px">${(t.comments || []).map((c) => `<div class="comment ${c.internal ? "internal" : ""}"><div class="row-between"><strong>${esc(c.author)}</strong><span class="small muted">${fmtDate(c.created_at)}${c.internal ? " · nota interna" : ""}</span></div><div>${esc(c.body)}</div></div>`).join("") || '<p class="muted">Sin comentarios todavía.</p>'}</div>
+        <div class="stack">${(t.comments || []).map((c) => `<div class="comment ${c.internal ? "internal" : ""}"><div class="row-between"><strong>${esc(c.author)}</strong><span class="small muted">${fmtDate(c.created_at)}${c.internal ? " · nota interna" : ""}</span></div><div>${esc(c.body)}</div></div>`).join("") || '<p class="muted">Sin comentarios todavía.</p>'}</div>
         ${["CERRADO", "CANCELADO"].includes(t.state) ? "" : `<form id="comment-form" class="stack" style="margin-top:10px"><textarea name="body" required maxlength="5000" placeholder="Escribe una actualización o pregunta"></textarea>
           <div class="row-between">${["ADMIN", "JEFE_TI", "TECNICO"].includes(App.me.role) ? '<label class="check"><input type="checkbox" name="internal"> Nota interna (no la ve el solicitante)</label>' : "<span></span>"}<button class="btn btn-primary btn-sm" type="submit">Comentar</button></div></form>`}</div>
       <div><div class="section-title">Adjuntos <span class="pill">${(t.attachments || []).length}</span></div>
-        <div class="row" style="margin-top:8px">${(t.attachments || []).map((a) => `<button class="source-link" data-action="download-attachment" data-id="${esc(a.id)}" data-name="${esc(a.name)}">⇩ ${esc(a.name)}</button>`).join("") || '<span class="muted">Sin adjuntos.</span>'}</div>
+        <div class="row">${(t.attachments || []).map((a) => `<button class="source-link" data-action="download-attachment" data-id="${esc(a.id)}" data-name="${esc(a.name)}">${icon("clip", 13)} ${esc(a.name)}</button>`).join("") || '<span class="muted">Sin adjuntos.</span>'}</div>
         ${["CERRADO", "CANCELADO"].includes(t.state) ? "" : `<form id="attachment-form" class="row" style="margin-top:10px"><input type="file" name="file" accept="image/png,image/jpeg,application/pdf,text/plain" required style="flex:1"><button class="btn btn-secondary btn-sm" type="submit">Subir evidencia</button></form>`}</div>
-      <div><div class="section-title">Historial</div><div class="timeline" style="margin-top:8px">${(t.history || []).map((h) => `<div class="timeline-item"><div><strong>${esc(h.detail)}</strong><div class="small muted">${esc(h.actor)} · ${fmtDate(h.created_at)}</div></div></div>`).join("") || '<p class="muted">Sin eventos.</p>'}</div></div>
+      <div><div class="section-title">Historial</div><div class="timeline">${(t.history || []).map((h) => `<div class="timeline-item"><div><strong>${esc(h.detail)}</strong><div class="small muted">${esc(h.actor)} · ${fmtDate(h.created_at)}</div></div></div>`).join("") || '<p class="muted">Sin eventos.</p>'}</div></div>
     </div>`;
   const commentForm = $("#comment-form");
   if (commentForm) commentForm.onsubmit = async (e) => {
@@ -596,9 +696,9 @@ function renderAiResult(box, result) {
   const sources = (result.sources || []).map((s) => `<button class="source-link" data-action="open-ticket" data-id="${esc(s.id)}" title="${esc(s.solution || "")}">${esc(s.number)} · ${esc(s.title)}</button>`).join("");
   box.innerHTML = `<div class="stack" style="margin-top:8px">
     ${result.llm_used ? `<div class="ai-answer">${esc(result.answer)}</div><span class="small muted">Generado por ${esc(result.provider)} · ${esc(result.model)}. Verifica la información antes de actuar.</span>`
-      : `<div class="banner ${result.error ? "banner-crit" : "banner-warn"}"><span class="ico">ⓘ</span><div><b>${result.error ? "El LLM no respondió" : "LLM no configurado"}</b>${esc(result.notice)}</div></div>`}
+      : banner(result.error ? "crit" : "warn", result.error ? "El LLM no respondió" : "LLM no configurado", result.notice)}
     ${result.notice && result.llm_used ? `<span class="small muted">${esc(result.notice)}</span>` : ""}
-    ${sources ? `<div><span class="small muted">Tickets similares encontrados en el historial (búsqueda local):</span><div class="row" style="margin-top:6px">${sources}</div></div>` : ""}</div>`;
+    ${sources ? `<div><span class="small muted">Tickets similares encontrados en el historial (búsqueda local):</span><div class="row mt-8">${sources}</div></div>` : ""}</div>`;
 }
 
 Actions["ai-summary"] = async (el) => {
@@ -629,7 +729,7 @@ Actions["ml-ticket"] = async (el) => {
       ${p.recommendations?.length ? `<div><b class="small">Técnicos recomendados</b><ol class="small">${p.recommendations.map((r) => `<li>${esc(r.name)} — ${esc(r.reason)}</li>`).join("")}</ol></div>` : ""}
       <span class="small muted">Modelo ${esc(p.model.version)}</span></div>`;
   } catch (error) {
-    box.innerHTML = `<div class="banner banner-warn"><span class="ico">ⓘ</span><div>${esc(error.message)}</div></div>`;
+    box.innerHTML = banner("warn", "", error.message);
   } finally { busy(el, false); }
 };
 
@@ -643,11 +743,12 @@ Pages.notifications = async (root) => {
   setTitle("Notificaciones", "Novedades de tus tickets");
   const rows = await api("/notifications");
   const unread = rows.filter((n) => !n.read);
-  root.innerHTML = `<section class="card"><div class="card-head"><div><h2>Centro de actividad</h2><p>${unread.length} sin leer</p></div>
-      ${unread.length ? '<button class="btn btn-secondary btn-sm" data-action="read-all">Marcar todas como leídas</button>' : ""}</div>
-    <div class="list">${rows.map((n) => `<div class="list-item ${n.read ? "" : "unread"}"><div><strong>${esc(n.title)}</strong><div>${esc(n.body)}</div><div class="small muted">${fmtDate(n.created_at)}</div></div>
+  root.innerHTML = `<section class="card"><div class="card-head"><div><h2>Centro de actividad</h2><p>${unread.length ? `${unread.length} sin leer de ${rows.length}` : `${rows.length} notificaciones, todas leídas`}</p></div>
+      ${unread.length ? `<button class="btn btn-secondary btn-sm" data-action="read-all">${icon("check", 15)} Marcar todas como leídas</button>` : ""}</div>
+    ${rows.length ? `<div class="list">${rows.map((n) => `<div class="list-item ${n.read ? "" : "unread"}"><div class="stack" style="gap:2px"><strong>${esc(n.title)}</strong><span class="muted">${esc(n.body)}</span><span class="small muted">${fmtDate(n.created_at)}</span></div>
       <div class="row">${n.ticket_id ? `<button class="btn btn-secondary btn-sm" data-action="open-ticket" data-id="${esc(n.ticket_id)}">Ver ticket</button>` : ""}
-      ${n.read ? "" : `<button class="btn btn-link" data-action="read-one" data-id="${esc(n.id)}">Marcar leída</button>`}</div></div>`).join("") || empty("No tienes notificaciones")}</div></section>`;
+      ${n.read ? "" : `<button class="btn btn-quiet btn-sm" data-action="read-one" data-id="${esc(n.id)}">Marcar leída</button>`}</div></div>`).join("")}</div>`
+      : empty("No tienes notificaciones", "Te avisaremos aquí cuando cambie el estado de tus tickets.", "bell")}</section>`;
 };
 Actions["read-one"] = async (el) => {
   try { await api(`/notifications/${el.dataset.id}/read`, { method: "PATCH" }); refreshUnread(); route(); } catch (error) { flash(error.message, true); }
@@ -682,17 +783,18 @@ async function renderAssistant(root) {
   const status = await api("/llm/status").catch(() => ({ configured: false, message: "No se pudo consultar el estado del asistente." }));
   const prompts = CHAT_PROMPTS[isSupervisor() ? "SUPERVISOR" : App.me.role];
   root.innerHTML = `
-    ${status.configured ? `<div class="banner banner-info"><span class="ico">✦</span><div><b>Asistente conectado</b>Proveedor ${esc(status.provider)} · modelo ${esc(status.model)}. Usa el historial de tickets que puedes ver como contexto.</div></div>`
-      : `<div class="banner banner-warn"><span class="ico">ⓘ</span><div><b>El asistente LLM no está configurado</b>${esc(status.message || "")} Mientras tanto, la búsqueda en el historial funciona con normalidad y no se simulan respuestas.</div></div>`}
-    <section class="grid grid-2" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr)">
-      <article class="card chat"><div class="chat-log" id="chat-log"></div>
-        <form id="chat-form" class="chat-form"><textarea name="message" required minlength="2" maxlength="2000" placeholder="Escribe tu consulta sobre soporte técnico…"></textarea>
-          <div class="stack"><button class="btn btn-primary" type="submit">Enviar</button><button class="btn btn-secondary btn-sm" type="button" data-action="chat-clear">Limpiar</button></div></form></article>
-      <aside class="stack">
+    ${status.configured ? "" : banner("warn", status.message ? "" : "El asistente LLM no está configurado", `${status.message || ""} Mientras tanto, la búsqueda en el historial funciona con normalidad y no se simulan respuestas.`)}
+    <section class="assistant-layout">
+      <article class="card chat"><div class="chat-log" id="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form"><label class="sr-only" for="chat-message">Mensaje</label><textarea id="chat-message" name="message" required minlength="2" maxlength="2000" placeholder="Escribe tu consulta sobre soporte técnico… (Enter para enviar)"></textarea>
+          <div class="stack"><button class="btn btn-primary" type="submit">Enviar</button><button class="btn btn-quiet btn-sm" type="button" data-action="chat-clear">Limpiar</button></div></form></article>
+      <aside class="stack" style="gap:20px">
+        <div class="card"><div class="status-line"><span class="status-dot ${status.configured ? "on" : "off"}"></span>${status.configured ? `Conectado · ${esc(status.provider)} · <span class="mono">${esc(status.model)}</span>` : "Sin proveedor LLM"}</div>
+          <p class="small muted mt-8">Responde con el historial de tickets que tu rol puede ver.</p></div>
         <div class="card"><div class="card-head"><h3>Prueba con</h3></div><div class="suggestions">${prompts.map((p) => `<button type="button" data-action="chat-prompt" data-text="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
-        <div class="card"><div class="card-head"><div><h3>Buscar en el historial</h3><p>Búsqueda local por similitud (no usa LLM).</p></div></div>
-          <form id="kb-search" class="row"><input name="q" required minlength="2" placeholder="Ej.: VPN no conecta" style="flex:1"><button class="btn btn-secondary" type="submit">Buscar</button></form>
-          <div id="kb-results" class="stack" style="margin-top:10px"></div></div>
+        <div class="card"><div class="card-head"><div><h3>Buscar en el historial</h3><p>Búsqueda local por similitud, sin LLM.</p></div></div>
+          <form id="kb-search" class="row" role="search"><input name="q" type="search" required minlength="2" placeholder="Ej.: VPN no conecta" aria-label="Buscar en el historial" style="flex:1"><button class="btn btn-secondary" type="submit">Buscar</button></form>
+          <div id="kb-results" class="mt-12"></div></div>
       </aside>
     </section>`;
   const log = $("#chat-log");
@@ -701,7 +803,7 @@ async function renderAssistant(root) {
     log.innerHTML = items.length ? items.map((m) => {
       const sources = (m.sources || []).map((s) => `<button class="source-link" data-action="open-ticket" data-id="${esc(s.id)}">${esc(s.number)}</button>`).join("");
       return `<div class="msg ${m.kind}">${esc(m.text)}${sources ? `<div class="sources"><span class="small muted">Tickets relacionados:</span>${sources}</div>` : ""}</div>`;
-    }).join("") : `<div class="empty"><strong>¿En qué puedo ayudarte?</strong><span>Pregunta sobre problemas técnicos, el estado de tus tickets o soluciones anteriores.</span></div>`;
+    }).join("") : empty("¿En qué puedo ayudarte?", "Pregunta sobre problemas técnicos, el estado de tus tickets o soluciones anteriores.", "assistant");
     log.scrollTop = log.scrollHeight;
   };
   draw();
@@ -740,9 +842,9 @@ async function renderAssistant(root) {
     box.innerHTML = loadingHtml("Buscando…");
     try {
       const r = await api(`/llm/search?q=${encodeURIComponent(e.target.q.value)}`);
-      box.innerHTML = r.results.length ? r.results.map((s) => `<div class="list-item clickable" data-action="open-ticket" data-id="${esc(s.id)}" role="button" tabindex="0"><div>
-        <strong>${esc(s.number)} · ${esc(s.title)}</strong><div class="small muted">${esc(s.category)} · ${esc(STATE_LABEL[s.state] || s.state)}</div>
-        ${s.solution ? `<div class="small">Solución: ${esc(s.solution)}</div>` : ""}</div></div>`).join("") : empty("Sin coincidencias");
+      box.innerHTML = r.results.length ? `<div class="list">${r.results.map((s) => `<div class="list-item clickable" data-action="open-ticket" data-id="${esc(s.id)}" role="button" tabindex="0"><div class="stack" style="gap:2px">
+        <strong>${esc(s.title)}</strong><span class="small muted"><span class="ticket-no">${esc(s.number)}</span> · ${esc(s.category)} · ${esc(STATE_LABEL[s.state] || s.state)}</span>
+        ${s.solution ? `<span class="small">Solución: ${esc(s.solution)}</span>` : ""}</div></div>`).join("")}</div>` : empty("Sin coincidencias", "Prueba con otras palabras.", "search");
     } catch (error) { box.innerHTML = `<p class="muted">${esc(error.message)}</p>`; }
   };
 }
@@ -779,21 +881,21 @@ Pages.admin = async (root) => {
         <div class="full"><button class="btn btn-primary" type="submit">Guardar</button></div></form></article>
     </section>
     <section class="card"><div class="card-head"><div><h3>Técnicos</h3><p>Disponibilidad, carga máxima y especialidades usadas por la asignación automática y por el recomendador ML.</p></div></div>
-      ${candidates.length ? `<form id="tech-form" class="toolbar" style="margin-bottom:14px"><label>Nuevo perfil técnico<select name="user_id">${candidates.map((u) => option(u.id, u.full_name)).join("")}</select></label>
+      ${candidates.length ? `<form id="tech-form" class="toolbar subpanel" style="margin-bottom:16px"><label>Nuevo perfil técnico<select name="user_id">${candidates.map((u) => option(u.id, u.full_name)).join("")}</select></label>
         <label>Carga máxima<input name="max_load" type="number" min="1" max="100" value="8"></label>
         <label>Especialidades<select name="specialty_ids" multiple size="3">${cats.specialties.map((s) => option(s.id, s.name)).join("")}</select></label>
-        <button class="btn btn-primary" type="submit">Crear perfil</button></form>` : '<p class="muted small" style="margin-bottom:10px">Para crear un perfil técnico, primero crea un usuario con rol Técnico.</p>'}
-      <div class="table-wrap"><table class="table-compact"><thead><tr><th>Técnico</th><th>Especialidades</th><th>Carga máx.</th><th>Disponible</th><th></th></tr></thead><tbody>
+        <button class="btn btn-primary" type="submit">Crear perfil</button></form>` : '<p class="muted small" style="margin-bottom:12px">Para crear un perfil técnico, primero crea un usuario con rol Técnico.</p>'}
+      <div class="table-wrap table-scroll"><table class="table-compact"><thead><tr><th>Técnico</th><th>Especialidades</th><th>Carga máx.</th><th>Disponible</th><th></th></tr></thead><tbody>
       ${techs.map((t) => `<tr data-tech-row="${esc(t.id)}" data-user="${esc(t.user_id)}"><td><strong>${esc(t.name)}</strong><span class="sub">${esc(t.email)}</span></td>
         <td><select name="specialty_ids" multiple size="3" aria-label="Especialidades">${cats.specialties.map((s) => option(s.id, s.name, (t.specialties || []).map((n) => specIdByName[n]).includes(s.id))).join("")}</select></td>
         <td><input name="max_load" type="number" min="1" max="100" value="${t.max_load}" style="width:80px"></td>
-        <td><label class="check"><input type="checkbox" name="available" ${t.available ? "checked" : ""}> Sí</label></td>
+        <td><label class="check"><input type="checkbox" name="available" ${t.available ? "checked" : ""}> Disponible</label></td>
         <td><button class="btn btn-secondary btn-sm" data-action="save-tech" data-id="${esc(t.id)}">Guardar</button></td></tr>`).join("") || `<tr><td colspan="5">${empty("Sin técnicos")}</td></tr>`}
       </tbody></table></div></section>
-    <section class="card"><div class="card-head"><h3>Usuarios</h3><input id="user-filter" placeholder="Filtrar por nombre o correo" style="max-width:280px"></div>
-      <div class="table-wrap"><table class="table-compact"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody id="user-rows">
+    <section class="card"><div class="card-head"><div><h3>Usuarios</h3><p>${users.length} cuentas registradas</p></div><input id="user-filter" type="search" placeholder="Filtrar por nombre o correo" aria-label="Filtrar usuarios"></div>
+      <div class="table-wrap table-scroll"><table class="table-compact"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody id="user-rows">
       ${users.map((u) => `<tr data-filter="${esc((u.full_name + " " + u.email).toLowerCase())}"><td><strong>${esc(u.full_name)}</strong><span class="sub">${esc(u.email)}</span></td>
-        <td>${roleSelect(u)}</td><td>${u.active ? '<span class="pill pill-real">Activo</span>' : '<span class="pill st-cancelado">Inactivo</span>'}</td>
+        <td>${roleSelect(u)}</td><td>${u.active ? '<span class="pill pill-ok"><span class="dot"></span>Activo</span>' : '<span class="pill st-cancelado"><span class="dot"></span>Inactivo</span>'}</td>
         <td>${u.id === App.me.id ? '<span class="muted small">Tu cuenta</span>' : `<button class="btn btn-secondary btn-sm" data-action="toggle-user" data-id="${esc(u.id)}" data-active="${u.active}">${u.active ? "Desactivar" : "Activar"}</button>`}</td></tr>`).join("")}
       </tbody></table></div></section>`;
 
@@ -855,11 +957,11 @@ Pages.settings = async (root) => {
   setTitle("Reglas de asignación", "Pesos del algoritmo que elige técnico automáticamente al crear un ticket");
   const rows = await api("/settings");
   const weights = rows.filter((s) => WEIGHT_TEXT[s.key]);
-  root.innerHTML = `<div class="banner banner-info"><span class="ico">ⓘ</span><div><b>¿Cómo funciona?</b>Cada técnico disponible y compatible recibe un puntaje ponderado. Valores entre 0 y 1; un valor mayor da más importancia al criterio.
-      Estas reglas son deterministas e independientes del recomendador de Machine Learning del Centro de IA.</div></div>
-    <form id="settings-form" class="card stack">${weights.map((s) => `<div class="row-between"><div><strong>${esc(WEIGHT_TEXT[s.key][0])}</strong><div class="small muted">${esc(WEIGHT_TEXT[s.key][1])} <span class="mono">${esc(s.key)}</span></div></div>
-      <input name="${esc(s.key)}" type="number" min="0" max="1" step="0.01" value="${esc(s.value)}" style="max-width:120px" required></div>`).join('<div class="divider"></div>')}
-      <div><button class="btn btn-primary" type="submit">Guardar cambios</button></div></form>`;
+  root.innerHTML = `${banner("info", "¿Cómo funciona?", "Cada técnico disponible y compatible recibe un puntaje ponderado. Valores entre 0 y 1; un valor mayor da más importancia al criterio. Estas reglas son deterministas e independientes del recomendador de Machine Learning.")}
+    <form id="settings-form" class="card" style="max-width:860px;gap:0"><div class="card-head"><div><h3>Pesos del algoritmo</h3><p>${weights.length} criterios</p></div></div>
+      ${weights.map((s) => `<div class="row-between stat-line" style="padding:14px 0"><div><strong>${esc(WEIGHT_TEXT[s.key][0])}</strong><div class="small muted">${esc(WEIGHT_TEXT[s.key][1])} <span class="mono">${esc(s.key)}</span></div></div>
+      <input name="${esc(s.key)}" type="number" min="0" max="1" step="0.01" value="${esc(s.value)}" style="max-width:110px" aria-label="${esc(WEIGHT_TEXT[s.key][0])}" required></div>`).join("")}
+      <div class="form-foot" style="margin-top:4px"><span class="muted small">Los cambios se aplican a las próximas asignaciones automáticas.</span><button class="btn btn-primary" type="submit">Guardar cambios</button></div></form>`;
   $("#settings-form").onsubmit = async (e) => {
     e.preventDefault();
     const btn = e.submitter;
@@ -875,20 +977,20 @@ Pages.settings = async (root) => {
 Pages.audit = async (root) => {
   setTitle("Auditoría", "Últimas 500 operaciones registradas");
   const rows = await api("/audit");
-  root.innerHTML = `<section class="card"><div class="card-head"><div><h3>Registro de actividad</h3><p>${rows.length} eventos</p></div><input id="audit-filter" placeholder="Filtrar por acción, módulo o usuario" style="max-width:300px"></div>
-    <div class="table-wrap"><table class="table-compact"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Módulo</th><th>Entidad</th><th>IP</th></tr></thead><tbody id="audit-rows">
-    ${rows.map((a) => `<tr data-filter="${esc(`${a.action} ${a.module} ${a.user} ${a.entity}`.toLowerCase())}"><td class="small">${fmtDate(a.created_at)}</td><td>${esc(a.user)}</td><td><strong>${esc(a.action)}</strong></td><td>${esc(a.module)}</td><td class="small">${esc(a.entity)}</td><td class="small mono">${esc(a.ip || "—")}</td></tr>`).join("") || `<tr><td colspan="6">${empty("Sin eventos")}</td></tr>`}
+  root.innerHTML = `<section class="card card-flush"><div class="card-head" style="padding-bottom:16px;margin:0"><div><h3>Registro de actividad</h3><p>${rows.length} eventos</p></div><input id="audit-filter" type="search" placeholder="Filtrar por acción, módulo o usuario" aria-label="Filtrar auditoría"></div>
+    <div class="table-wrap table-scroll" style="max-height:calc(100dvh - 230px)"><table class="table-compact"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Módulo</th><th>Entidad</th><th>IP</th></tr></thead><tbody id="audit-rows">
+    ${rows.map((a) => `<tr data-filter="${esc(`${a.action} ${a.module} ${a.user} ${a.entity}`.toLowerCase())}"><td class="small" style="white-space:nowrap">${fmtDate(a.created_at)}</td><td>${esc(a.user)}</td><td><strong>${esc(a.action)}</strong></td><td><span class="pill">${esc(a.module)}</span></td><td class="small">${esc(a.entity)}</td><td class="small mono">${esc(a.ip || "—")}</td></tr>`).join("") || `<tr><td colspan="6">${empty("Sin eventos")}</td></tr>`}
     </tbody></table></div></section>`;
   $("#audit-filter").oninput = (e) => { const q = e.target.value.toLowerCase(); $$("#audit-rows tr").forEach((r) => { r.hidden = !(r.dataset.filter || "").includes(q); }); };
 };
 
 Pages.reports = async (root) => {
   setTitle("Reportes", "Exporta la información para análisis o presentaciones");
-  const card = (icon, title, text, path, file) => `<article class="card stack"><span class="eyebrow">${icon}</span><h3>${esc(title)}</h3><p class="muted">${esc(text)}</p>
-    <div><button class="btn btn-primary" data-action="download" data-path="${esc(path)}" data-file="${esc(file)}">Descargar</button></div></article>`;
-  root.innerHTML = `<section class="grid grid-auto">
+  const card = (tag, title, text, path, file) => `<article class="card report"><span class="report-ico" aria-hidden="true">${esc(tag)}</span><div><h3>${esc(title)}</h3><p>${esc(text)}</p>
+    <button class="btn btn-secondary btn-sm" data-action="download" data-path="${esc(path)}" data-file="${esc(file)}">${icon("download", 15)} Descargar</button></div></article>`;
+  root.innerHTML = `<section class="grid grid-2" style="max-width:1100px">
     ${card("CSV", "Tickets (CSV)", "Datos tabulares para filtrar y analizar.", "/reports/tickets.csv", "fixit-tickets.csv")}
-    ${card("Excel", "Tickets (Excel)", "Hoja de cálculo con formato.", "/reports/tickets.xlsx", "fixit-tickets.xlsx")}
+    ${card("XLSX", "Tickets (Excel)", "Hoja de cálculo con formato.", "/reports/tickets.xlsx", "fixit-tickets.xlsx")}
     ${card("PDF", "Tickets (PDF)", "Listado listo para compartir.", "/reports/tickets.pdf", "fixit-tickets.pdf")}
     ${card("ML", "Dataset de Machine Learning", "Variables sin fuga de información y objetivos (horas de resolución, incumplimiento SLA). Incluye la columna de origen del registro.", "/ml/dataset.csv", "fixit-ml-dataset.csv")}
   </section>`;
@@ -900,7 +1002,7 @@ document.addEventListener("click", (e) => {
   const pageLink = e.target.closest("[data-page-link]");
   if (pageLink) { e.preventDefault(); go(pageLink.dataset.pageLink, pageLink.dataset.sub || ""); return; }
   const navBtn = e.target.closest("#nav [data-page]");
-  if (navBtn) { go(navBtn.dataset.page); return; }
+  if (navBtn) { go(navBtn.dataset.page, navBtn.dataset.sub || ""); return; }
   const el = e.target.closest("[data-action]");
   if (el && Actions[el.dataset.action]) {
     if (el.tagName === "A") e.preventDefault();
@@ -915,6 +1017,8 @@ document.addEventListener("change", (e) => {
   if (el && ChangeActions[el.dataset.actionChange]) ChangeActions[el.dataset.actionChange](el, e);
 });
 Actions["toggle-menu"] = () => $("#app").classList.toggle("menu-open");
+Actions.retry = () => route();
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#app").classList.contains("menu-open")) $("#app").classList.remove("menu-open"); });
 window.addEventListener("hashchange", route);
 modal.addEventListener("click", (e) => { if (e.target === modal) modal.close(); });
 
@@ -948,11 +1052,12 @@ $("#logout").onclick = () => {
 };
 $("#notify").onclick = () => go("notifications");
 $("#show-register").onclick = async () => {
-  modal.showModal();
-  $("#modal-content").innerHTML = `<div class="modal-head"><div><span class="eyebrow">Solicitante</span><h2>Crear cuenta</h2></div><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">✕</button></div>
+  openModal(true);
+  $("#modal-content").innerHTML = `<div class="modal-head"><div><span class="eyebrow">Solicitante</span><h2>Crear cuenta</h2></div><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">${icon("close", 20)}</button></div>
     <div class="modal-body"><form id="register-form"><label>Nombre completo<input name="full_name" required minlength="2"></label>
       <label>Correo institucional<input name="email" type="email" required></label><label>Contraseña<input name="password" type="password" minlength="8" required><span class="hint">Mínimo 8 caracteres.</span></label>
-      <button class="btn btn-primary" type="submit">Crear cuenta</button></form></div>`;
+      <div id="register-error" class="form-error" role="alert" hidden></div>
+      <button class="btn btn-primary btn-block" type="submit">Crear cuenta</button></form></div>`;
   $("#register-form").onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -961,7 +1066,7 @@ $("#show-register").onclick = async () => {
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Revisa los datos ingresados.");
       modal.close();
       flash("Cuenta creada. Ya puedes iniciar sesión.");
-    } catch (err) { flash(err.message, true); }
+    } catch (err) { const box = $("#register-error"); box.textContent = err.message; box.hidden = false; }
   };
 };
 

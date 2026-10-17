@@ -7,13 +7,32 @@ from pathlib import Path
 from app.api.router import api
 from app.api.llm import llm_api
 from app.api.ml import ml_api
+from app.api.agents import agents_api
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.services.seed import seed
 import asyncio
+import logging
 from app.automation.worker import AutomationWorker
+from app.ml.training import ensure_ready
+from app.agents.runner import ensure_states
+from app.agents.scheduler import scheduler_loop
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+log = logging.getLogger("fixit.ml")
+
+
+def prepare_ml() -> None:
+    """Load the models stored in the database, or train them if missing/incompatible. A failure
+    never blocks startup: the ML panel then reports the models as not trained."""
+    db = SessionLocal()
+    try:
+        log.info("Modelos ML: %s", "cargados" if ensure_ready(db) == "loaded" else "entrenados y guardados")
+    except Exception:
+        db.rollback()
+        log.exception("No se pudieron preparar los modelos ML al iniciar")
+    finally:
+        db.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,6 +43,16 @@ async def lifespan(app: FastAPI):
         seed(db)
     finally:
         db.close()
+
+    await asyncio.to_thread(prepare_ml)
+
+    db = SessionLocal()
+    try:
+        ensure_states(db)
+    finally:
+        db.close()
+    scheduler_stop = asyncio.Event()
+    scheduler = asyncio.create_task(scheduler_loop(scheduler_stop), name="fixit-agent-scheduler")
 
     # The automation worker relies on PostgreSQL features (SKIP LOCKED, automation_events triggers).
     worker = task = None
@@ -39,6 +68,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        scheduler_stop.set()
+        await scheduler
         if worker and task:
             worker.stop()
             task.cancel()
@@ -52,6 +83,7 @@ app=FastAPI(title="FixIT",version="1.0.0",lifespan=lifespan)
 app.include_router(api)
 app.include_router(ml_api)
 app.include_router(llm_api)
+app.include_router(agents_api)
 app.mount("/static",StaticFiles(directory=STATIC_DIR),name="static")
 
 @app.exception_handler(RequestValidationError)

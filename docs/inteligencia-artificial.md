@@ -1,21 +1,21 @@
 # Inteligencia Artificial en FixIT
 
-## Centro de IA (ADMIN y JEFE_TI)
+## Machine Learning (ADMIN y JEFE_TI)
 
-Menú **Inteligencia artificial → Centro de IA**, con pestañas:
+Menú **Inteligencia artificial → Machine Learning**, con pestañas (el asistente LLM está en el menú principal, «Asistente»):
 
 | Pestaña | Contenido |
 |---|---|
-| Resumen y entrenamiento | Tickets reales/sintéticos, estado y versión de cada modelo, botón «Entrenar ahora», historial de entrenamientos |
+| Resumen y entrenamiento | Total de tickets, estado y versión de cada modelo, botón «Entrenar ahora», historial de entrenamientos |
 | Riesgo SLA | Tickets abiertos ordenados por probabilidad de incumplir el SLA, tiempo estimado, factores que influyen y técnico recomendado; filtros por área, categoría, prioridad, técnico y origen |
 | Técnicos | Carga actual vs. capacidad, desempeño histórico y recomendaciones para la cola, con botón «Asignar» |
 | Demanda | Histórico diario, proyección de 4 semanas con intervalo, evaluación fuera de muestra y reparto por categoría |
 | Patrones | Tickets e incumplimiento por periodo, categorías, prioridades, mapa categoría × prioridad, día × hora y tabla de técnicos |
 | Simulador | Prioridad sugerida, tiempo, riesgo y mejores técnicos para un ticket hipotético |
-| Métricas | MAE, precisión/recall/F1/AUC, matriz de confusión, calibración, importancia de variables, métricas del pronóstico y backtest del recomendador |
-| Asistente | Chat LLM (también disponible para todos los roles en «Asistente») |
+| Métricas | MAE, RMSE, R², precisión/recall/F1/AUC, matriz de confusión, calibración, importancia de variables, métricas del pronóstico y backtest del recomendador |
+| Agentes y monitor | Control de los cinco agentes, ejecuciones, actividad del LLM (actualización cada 4 s), métricas de regresión y justificación de cada agente |
 
-Todas las cifras vienen de `/api/ml/*`. Cuando un modelo no está entrenado o no hay datos suficientes, la interfaz lo dice y no muestra valores. Si los datos de entrenamiento son sintéticos, aparece el aviso «Resultados obtenidos con datos sintéticos — no validados con datos reales».
+Todas las cifras vienen de `/api/ml/*`. Cuando un modelo no está entrenado o no hay datos suficientes, la interfaz lo dice y no muestra valores. La pestaña Métricas y `metadata` documentan cuántos tickets de entrenamiento llevan el prefijo SYN-.
 
 ## Modelos (`backend/app/ml`)
 
@@ -32,7 +32,8 @@ Todas las cifras vienen de `/api/ml/*`. Cuando un modelo no está entrenado o no
 - Las variables se calculan **con la información disponible al crear el ticket**: área, categoría, prioridad, texto del solicitante, técnico asignado, carga abierta de ese momento y estadísticas de tickets **ya terminados** antes de esa fecha (barrido temporal en `dataset.py`).
 - Nunca son variables: estado, fechas de atención/resolución/cierre, diagnóstico, solución, comentarios ni calificación.
 - Evaluación temporal: se entrena con el 80 % más antiguo **cuyo resultado ya se conocía en la fecha de corte** y se evalúa con el 20 % más reciente. Después, el modelo final se reentrena con todos los datos etiquetados.
-- Semillas fijas; los artefactos (`*.joblib`) y `metadata.json` con versión, fechas, librerías, métricas y origen de los datos se guardan en `ML_MODEL_DIR` (por defecto `backend/ml_models`, fuera de Git).
+- Semillas fijas; los artefactos (`*.joblib`) y `metadata.json` con versión, fechas, librerías, métricas y origen de los datos se guardan en la tabla `ml_artifacts` de la base de datos (migración `0003_ml_artifacts`), firmados con HMAC derivado de `JWT_SECRET_KEY`. `ML_MODEL_DIR` (por defecto `backend/ml_models`, fuera de Git) es solo una caché local.
+- Al arrancar, la aplicación carga los modelos guardados; si faltan, su firma no coincide o fueron generados con otra versión del formato, de scikit-learn o de NumPy, los entrena con los tickets disponibles y los guarda antes de terminar de iniciar. Si nunca hubo datos suficientes y ahora hay más tickets, también reentrena.
 
 ### Explicaciones
 
@@ -58,6 +59,20 @@ Para cada predicción se reemplaza un grupo de factores (prioridad, categoría, 
 | POST | `/api/llm/tickets/{id}/suggestions` | ADMIN, JEFE_TI, TECNICO asignado |
 
 Los antiguos `POST /api/ml/predict`, `/api/ml/train` y `/api/llm/chat` sin autenticación (reglas fijas y respuestas simuladas) se eliminaron.
+
+## Agentes de IA (`backend/app/agents`, `/api/agents`)
+
+Cada ejecución queda en `agent_runs` (estado, origen, duración, resumen, resultado o error saneado), se audita (`AGENTE_<NOMBRE>`) y toma un bloqueo en `agent_states` que impide ejecuciones simultáneas del mismo agente entre procesos (expira si el proceso cae). Las alertas tienen clave única (`agent_alerts.dedup_key`), por lo que nunca se duplican.
+
+| Agente | Qué hace | Tecnología | Quién |
+|---|---|---|---|
+| Triage | Sugiere prioridad y categoría para tickets nuevos/reabiertos y para el texto que escribe el usuario (no se guarda) | Modelo de prioridad (TF-IDF + regresión logística), k-NN TF-IDF para la categoría, regresión de horas | Lotes: ADMIN/JEFE_TI; sugerencia: cualquier usuario |
+| Riesgo SLA | Evalúa los tickets abiertos y emite alertas únicas al técnico y a los jefes | Clasificador y regresor HistGradientBoosting | ADMIN/JEFE_TI |
+| Asignación | Recomienda técnico y, en modo «ejecutar», asigna con `services.tickets.assign` (historial, notificación, auditoría `ASIGNAR_AGENTE`) | Modelos de tiempo/riesgo por candidato; reglas de `AssignmentService` como respaldo | ADMIN/JEFE_TI |
+| Diagnóstico | Casos similares + sugerencia del LLM para un ticket (también atiende «Sugerir diagnóstico») | Búsqueda TF-IDF con permisos + LLM (Gemini con reintentos y modelo alternativo) | ADMIN/JEFE_TI y técnico asignado |
+| Automatización | Alertas SLA, recordatorios diarios de tickets atrasados/inactivos y resumen operativo diario | Tareas programables (`schedule_minutes`, desactivado por defecto) | ADMIN/JEFE_TI |
+
+`llm_calls` registra cada llamada al LLM (origen, proveedor, modelo, uso del modelo alternativo, estado, duración y error saneado). Nunca se guardan claves, prompts, respuestas ni conversaciones. Las tablas se crean con la migración `0004_agents_observability`.
 
 ## Asistente LLM
 
@@ -96,7 +111,7 @@ Funcionamiento: la búsqueda contextual (TF-IDF local) recupera tickets similare
 
 1. `docker compose up -d --build`
 2. `docker compose exec api python -m app.synthetic import`
-3. Entrar como administrador → Centro de IA → «Entrenar ahora».
+3. Los modelos se entrenan solos al iniciar; para reentrenar: administrador → Machine Learning → «Entrenar ahora».
 4. Revisar Riesgo SLA, Técnicos, Demanda, Patrones, Simulador y Métricas.
 5. (Opcional) Configurar `LLM_PROVIDER` y reiniciar para habilitar el asistente.
 6. Para volver a datos reales: `docker compose exec api python -m app.synthetic purge --yes` y reentrenar desmarcando «Incluir tickets sintéticos».

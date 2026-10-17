@@ -119,3 +119,28 @@ class ChatTurn(BaseModel):
 class ChatIn(BaseModel):
     message: str = Field(min_length=2, max_length=2000)
     history: list[ChatTurn] = Field(default_factory=list, max_length=20)
+
+
+class AgentRunIn(BaseModel):
+    """Parameters accepted by the agents; anything else is rejected."""
+    model_config = ConfigDict(extra="forbid")
+    ticket_id: str | None = Field(default=None, max_length=36)
+    mode: Literal["recomendar", "ejecutar"] = "recomendar"
+    limit: int = Field(default=20, ge=1, le=50)
+    threshold: float = Field(default=0.6, ge=0.3, le=0.95)
+    tasks: list[Literal["alertas_sla", "seguimiento_atrasados", "seguimiento_inactivos", "resumen_operativo"]] | None = None
+    inactive_hours: int = Field(default=48, ge=4, le=720)
+
+
+class AgentConfigIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    schedule_minutes: int | None = Field(default=None, ge=5, le=1440)
+    clear_schedule: bool = False
+
+
+class TriageSuggestIn(BaseModel):
+    title: str = Field(min_length=3, max_length=180)
+    description: str = Field(default="", max_length=8000)
+    area_id: str | None = Field(default=None, max_length=36)
+    category_id: str | None = Field(default=None, max_length=36)

@@ -4,63 +4,82 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
+  <meta name="description" content="FixIT: mesa de ayuda de soporte técnico con Machine Learning y agentes de IA.">
   <title>FixIT · Soporte técnico</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%230f2742%27/%3E%3Ctext x=%2716%27 y=%2722%27 font-size=%2716%27 text-anchor=%27middle%27 fill=%27%2338bdf8%27 font-family=%27Arial%27 font-weight=%27bold%27%3EF%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%23142033%27/%3E%3Cpath d=%27M10 9h12v3.2h-8.4v3.3h7v3.1h-7V23H10z%27 fill=%27%23f4f6fa%27/%3E%3Ccircle cx=%2723.5%27 cy=%2721.5%27 r=%272.5%27 fill=%27%234f7cf0%27/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <a class="skip-link" href="#content">Saltar al contenido</a>
+
   <div id="login" class="auth" hidden>
-    <section class="auth-hero">
-      <div class="brand brand-lg">Fix<span>IT</span></div>
-      <h1>Soporte técnico sin complicaciones</h1>
-      <p>Reporta un problema, sigue su avance y recibe ayuda del técnico adecuado.</p>
-      <ul class="auth-points">
-        <li><span aria-hidden="true">✓</span> Solicitudes con seguimiento en tiempo real</li>
-        <li><span aria-hidden="true">✓</span> Asignación automática al técnico especializado</li>
-        <li><span aria-hidden="true">✓</span> Panel de inteligencia artificial para supervisores</li>
-      </ul>
+    <section class="auth-hero" aria-label="Presentación de FixIT">
+      <div class="brand brand-lg"><span class="brand-mark" aria-hidden="true">F</span>FixIT</div>
+      <div class="auth-copy">
+        <p class="auth-kicker">Mesa de ayuda · TI</p>
+        <h1>Cada incidencia, del reporte a la solución, en un solo lugar.</h1>
+        <p>Registra un problema, sigue su avance y recibe ayuda del técnico adecuado. Los supervisores cuentan con modelos predictivos y agentes que vigilan la cola.</p>
+      </div>
+      <dl class="auth-facts">
+        <div><dt>Seguimiento</dt><dd>Estados, SLA y notificaciones por ticket</dd></div>
+        <div><dt>Machine Learning</dt><dd>Tiempo de resolución, riesgo de SLA y demanda</dd></div>
+        <div><dt>Cinco agentes</dt><dd>Triage, riesgo SLA, asignación, diagnóstico y automatización</dd></div>
+      </dl>
     </section>
-    <section class="auth-card" aria-labelledby="login-title">
-      <h2 id="login-title">Iniciar sesión</h2>
-      <p class="muted">Usa tu correo institucional.</p>
-      <form id="login-form" novalidate>
-        <label>Correo<input id="email" type="email" autocomplete="username" required></label>
-        <label>Contraseña<input id="password" type="password" autocomplete="current-password" required minlength="8"></label>
-        <button type="submit" class="btn btn-primary btn-block">Entrar</button>
-      </form>
-      <div id="login-error" class="form-error" role="alert" hidden></div>
-      <button type="button" class="btn btn-link" id="show-register">¿No tienes cuenta? Crear cuenta de solicitante</button>
+    <section class="auth-panel">
+      <div class="auth-card" aria-labelledby="login-title">
+        <h2 id="login-title">Iniciar sesión</h2>
+        <p class="muted">Usa tu correo institucional.</p>
+        <form id="login-form" novalidate>
+          <label>Correo<input id="email" type="email" autocomplete="username" required placeholder="nombre@organizacion.org"></label>
+          <label>Contraseña<input id="password" type="password" autocomplete="current-password" required minlength="8"></label>
+          <button type="submit" class="btn btn-primary btn-block btn-lg">Entrar</button>
+        </form>
+        <div id="login-error" class="form-error" role="alert" hidden></div>
+        <p class="auth-alt">¿No tienes cuenta? <button type="button" class="btn btn-link" id="show-register">Crear cuenta de solicitante</button></p>
+      </div>
     </section>
   </div>
 
   <div id="app" class="shell" hidden>
     <aside id="sidebar" class="sidebar" aria-label="Menú principal">
       <div class="sidebar-top">
-        <div class="brand">Fix<span>IT</span></div>
-        <button type="button" class="icon-btn sidebar-close" data-action="toggle-menu" aria-label="Cerrar menú">✕</button>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">F</span>FixIT</div>
+        <button type="button" class="icon-btn sidebar-close" data-action="toggle-menu" aria-label="Cerrar menú">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
       </div>
-      <div id="identity" class="identity"></div>
-      <nav id="nav"></nav>
-      <button type="button" class="btn btn-ghost-dark" id="logout">Cerrar sesión</button>
+      <nav id="nav" aria-label="Secciones"></nav>
+      <div class="sidebar-foot">
+        <div id="identity" class="identity"></div>
+        <button type="button" class="icon-btn" id="logout" aria-label="Cerrar sesión" title="Cerrar sesión">
+          <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
     </aside>
     <div class="scrim" data-action="toggle-menu" hidden></div>
     <main class="main">
       <header class="topbar">
-        <button type="button" class="icon-btn menu-btn" data-action="toggle-menu" aria-label="Abrir menú">☰</button>
+        <button type="button" class="icon-btn menu-btn" data-action="toggle-menu" aria-label="Abrir menú">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
         <div class="topbar-title">
           <h1 id="page-title">Panel</h1>
           <p id="page-note"></p>
         </div>
         <button type="button" id="notify" class="icon-btn bell" aria-label="Notificaciones">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5-6.71V3.5a2 2 0 0 0-4 0v.79A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 10a6 6 0 1 1 12 0c0 4.5 1.5 6 2 6.5H4c.5-.5 2-2 2-6.5ZM10 20a2.2 2.2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <b id="unread" class="badge-count" hidden></b>
         </button>
       </header>
-      <div id="flash" class="flash-zone" aria-live="polite"></div>
       <section id="content" class="content" tabindex="-1"></section>
     </main>
   </div>
 
+  <div id="flash" class="flash-zone" aria-live="polite"></div>
   <dialog id="modal" class="modal" aria-modal="true">
     <div id="modal-content"></div>
   </dialog>
@@ -69,5 +88,6 @@
   <script src="/static/charts.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/ai.js"></script>
+  <script src="/static/agents.js"></script>
 </body>
 </html>
