@@ -15,6 +15,7 @@ from app.core.errors import forbidden, not_found
 from app.models import *
 from app.schemas import *
 from app.security.auth import ALGORITHM, create_token, current_user, hash_password, require_roles, verify_password
+from app.security.demo_access import demo_session_blocked, is_demo_email  # DEMO_ACCESS_TEMPORARY
 from app.services.assignment import AssignmentService, WEIGHT_DEFAULTS
 from app.services.audit import audit, history, notify
 from app.services.tickets import assign, initial_due, next_number, set_state, state
@@ -58,6 +59,7 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
 def register(payload: UserCreate, request: Request, db: Session = Depends(get_db)):
     """Self-registration intentionally always grants the least-privileged role."""
     if db.query(User).filter(func.lower(User.email) == payload.email.lower()).first(): raise HTTPException(409, "El correo ya existe")
+    if is_demo_email(payload.email): raise HTTPException(422, "Dominio de correo reservado")  # DEMO_ACCESS_TEMPORARY
     role=db.query(Role).filter_by(code="USUARIO").one()
     if payload.area_id and not db.get(Area,payload.area_id): not_found("Área")
     user=User(full_name=payload.full_name,email=payload.email.lower(),password_hash=hash_password(payload.password),role_id=role.id,area_id=payload.area_id)
@@ -72,6 +74,7 @@ def refresh(payload: RefreshIn, db: Session = Depends(get_db)):
         user = db.query(User).options(joinedload(User.role)).get(claims.get("sub"))
     except JWTError: user = None
     if not user or not user.active: raise HTTPException(401, "Refresh token inválido")
+    if demo_session_blocked(user): raise HTTPException(401, "Accesos de demostración desactivados")  # DEMO_ACCESS_TEMPORARY
     return {"access_token": create_token(user, "access"), "refresh_token": create_token(user, "refresh"), "user": user_data(user)}
 
 @api.get("/auth/me")

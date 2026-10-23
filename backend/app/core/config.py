@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_upload_bytes: int = 5_242_880
 
+    # DEMO_ACCESS_TEMPORARY: one-click demo accounts on the login screen. Off unless DEMO_ACCESS_ENABLED=true;
+    # turning it off also invalidates every open demo session.
+    demo_access_enabled: bool = False
+
     # Machine Learning: trained artifacts live outside Git (see .gitignore).
     ml_model_dir: str = str(BACKEND_DIR / "ml_models")
 

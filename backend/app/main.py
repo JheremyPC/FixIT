@@ -8,6 +8,7 @@ from app.api.router import api
 from app.api.llm import llm_api
 from app.api.ml import ml_api
 from app.api.agents import agents_api
+from app.api.demo_access import demo_api  # DEMO_ACCESS_TEMPORARY
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.services.seed import seed
@@ -84,6 +85,7 @@ app.include_router(api)
 app.include_router(ml_api)
 app.include_router(llm_api)
 app.include_router(agents_api)
+app.include_router(demo_api)  # DEMO_ACCESS_TEMPORARY
 app.mount("/static",StaticFiles(directory=STATIC_DIR),name="static")
 
 @app.exception_handler(RequestValidationError)

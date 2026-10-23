@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.models import User
+from app.security.demo_access import demo_session_blocked  # DEMO_ACCESS_TEMPORARY
 
 security = HTTPBearer(auto_error=False)
 ALGORITHM = "HS256"
@@ -33,6 +34,8 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(secu
         user = None
     if not user or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión inválida o usuario inactivo")
+    if demo_session_blocked(user):  # DEMO_ACCESS_TEMPORARY
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Accesos de demostración desactivados")
     return user
 
 def require_roles(*codes: str):

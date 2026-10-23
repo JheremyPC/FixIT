@@ -26,6 +26,14 @@ docker compose exec api python -m app.synthetic import --csv /srv/fixit/outputs/
 
 El importador rechaza cualquier base remota (Supabase, Render, etc.). Las cuentas de demostración son `<nombre>@sintetico.fixit.example` con la contraseña `Demo!2026` (configurable con `FIXIT_SYNTHETIC_PASSWORD`).
 
+<!-- DEMO_ACCESS_TEMPORARY: begin -->
+### Accesos de demostración (temporal)
+
+Con `DEMO_ACCESS_ENABLED=true` el login muestra un panel para entrar con un clic como Administrador, Jefe de TI, Técnico o Usuario. El backend emite una sesión normal (JWT) para una cuenta fija por rol (`demo.*@demo.fixit.example`, contraseña aleatoria que nadie conoce), así que se aplican los permisos reales de cada rol. El técnico de demostración queda «no disponible» para que la asignación automática no le envíe tickets reales.
+
+Está **desactivado por defecto**; al volver a `false` (o quitar la variable) y reiniciar, el panel desaparece, los endpoints `/api/auth/demo*` responden 404 y las sesiones demo abiertas dejan de ser válidas. La cuenta demo de administrador tiene permisos completos: no lo active en producción. Todo el código está marcado con `DEMO_ACCESS_TEMPORARY`.
+<!-- DEMO_ACCESS_TEMPORARY: end -->
+
 ## Ejecución local sin Docker
 
 Requiere Python 3.12 y PostgreSQL (o SQLite para pruebas rápidas). Desde la raíz:

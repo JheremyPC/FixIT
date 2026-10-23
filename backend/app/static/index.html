@@ -40,6 +40,8 @@
         </form>
         <div id="login-error" class="form-error" role="alert" hidden></div>
         <p class="auth-alt">¿No tienes cuenta? <button type="button" class="btn btn-link" id="show-register">Crear cuenta de solicitante</button></p>
+        <!-- DEMO_ACCESS_TEMPORARY: filled by demo-access.js only when the backend has DEMO_ACCESS_ENABLED=true -->
+        <section id="demo-access" class="demo-access" aria-labelledby="demo-access-title" hidden></section>
       </div>
     </section>
   </div>
@@ -89,5 +91,6 @@
   <script src="/static/app.js"></script>
   <script src="/static/ai.js"></script>
   <script src="/static/agents.js"></script>
+  <script src="/static/demo-access.js"></script><!-- DEMO_ACCESS_TEMPORARY -->
 </body>
 </html>
