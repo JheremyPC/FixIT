@@ -89,9 +89,12 @@ async function apiWithTotal(path) {
 
 const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 
+/* Saves a file returned by the API. The server's file name (Content-Disposition) wins over the fallback. */
 async function download(path, filename) {
   try {
     const res = await request(path);
+    const match = /filename="?([^";]+)"?/i.exec(res.headers.get("content-disposition") || "");
+    if (match) filename = match[1];
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const link = Object.assign(document.createElement("a"), { href: url, download: filename });
@@ -131,6 +134,8 @@ const ICONS = {
   play: "M8 5.5v13l10.5-6.5Z",
   clip: "M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7 7a6 6 0 0 0 8.5 8.5L20 14",
   close: "M6 6l12 12M18 6 6 18",
+  shield: "M12 3 5 6v5.5c0 4.4 3 8.2 7 9.5 4-1.3 7-5.1 7-9.5V6ZM9 12l2 2 4-4",
+  filter: "M4 6h16M7 12h10M10 18h4",
 };
 const icon = (name, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name] || ICONS.info}"/></svg>`;
 const banner = (tone, title, text = "", extra = "") => `<div class="banner banner-${tone}"><span class="ico">${icon(tone === "crit" || tone === "warn" ? "alert" : "info")}</span><div>${title ? `<b>${esc(title)}</b>` : ""}${esc(text)}${extra}</div></div>`;
@@ -223,6 +228,7 @@ function navItems() {
   if (role === "ADMIN") manage.push(["admin", "Usuarios y catálogos", "users"], ["settings", "Reglas de asignación", "sliders"]);
   if (isSupervisor()) manage.push(["audit", "Auditoría", "history"], ["reports", "Reportes", "download"]);
   if (manage.length) groups.push({ title: "Gestión", items: manage });
+  groups.push({ title: "Información", items: [["legal", "Términos y privacidad", "shield"]] });
   return groups;
 }
 
@@ -280,6 +286,7 @@ async function startSession() {
   $("#app").hidden = false;
   renderNav();
   refreshUnread();
+  if (typeof checkPendingTerms === "function") checkPendingTerms();
   if (!location.hash || location.hash === "#") location.hash = "#/dashboard";
   else route();
 }
@@ -973,17 +980,7 @@ Pages.settings = async (root) => {
   };
 };
 
-/* ---------- Audit & reports ---------- */
-Pages.audit = async (root) => {
-  setTitle("Auditoría", "Últimas 500 operaciones registradas");
-  const rows = await api("/audit");
-  root.innerHTML = `<section class="card card-flush"><div class="card-head" style="padding-bottom:16px;margin:0"><div><h3>Registro de actividad</h3><p>${rows.length} eventos</p></div><input id="audit-filter" type="search" placeholder="Filtrar por acción, módulo o usuario" aria-label="Filtrar auditoría"></div>
-    <div class="table-wrap table-scroll" style="max-height:calc(100dvh - 230px)"><table class="table-compact"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Módulo</th><th>Entidad</th><th>IP</th></tr></thead><tbody id="audit-rows">
-    ${rows.map((a) => `<tr data-filter="${esc(`${a.action} ${a.module} ${a.user} ${a.entity}`.toLowerCase())}"><td class="small" style="white-space:nowrap">${fmtDate(a.created_at)}</td><td>${esc(a.user)}</td><td><strong>${esc(a.action)}</strong></td><td><span class="pill">${esc(a.module)}</span></td><td class="small">${esc(a.entity)}</td><td class="small mono">${esc(a.ip || "—")}</td></tr>`).join("") || `<tr><td colspan="6">${empty("Sin eventos")}</td></tr>`}
-    </tbody></table></div></section>`;
-  $("#audit-filter").oninput = (e) => { const q = e.target.value.toLowerCase(); $$("#audit-rows tr").forEach((r) => { r.hidden = !(r.dataset.filter || "").includes(q); }); };
-};
-
+/* ---------- Reports (the audit page lives in audit.js) ---------- */
 Pages.reports = async (root) => {
   setTitle("Reportes", "Exporta la información para análisis o presentaciones");
   const card = (tag, title, text, path, file) => `<article class="card report"><span class="report-ico" aria-hidden="true">${esc(tag)}</span><div><h3>${esc(title)}</h3><p>${esc(text)}</p>
@@ -1053,15 +1050,23 @@ $("#logout").onclick = () => {
 $("#notify").onclick = () => go("notifications");
 $("#show-register").onclick = async () => {
   openModal(true);
+  $("#modal-content").innerHTML = loadingHtml();
+  let terms = null;
+  try { terms = (await (await fetch("/api/legal")).json()).documents.find((d) => d.id === "terminos"); } catch { /* shown below */ }
   $("#modal-content").innerHTML = `<div class="modal-head"><div><span class="eyebrow">Solicitante</span><h2>Crear cuenta</h2></div><button class="icon-btn" data-action="close-modal" aria-label="Cerrar">${icon("close", 20)}</button></div>
-    <div class="modal-body"><form id="register-form"><label>Nombre completo<input name="full_name" required minlength="2"></label>
-      <label>Correo institucional<input name="email" type="email" required></label><label>Contraseña<input name="password" type="password" minlength="8" required><span class="hint">Mínimo 8 caracteres.</span></label>
+    <div class="modal-body"><form id="register-form"><label>Nombre completo<input name="full_name" required minlength="2" autocomplete="name"></label>
+      <label>Correo institucional<input name="email" type="email" required autocomplete="email"></label><label>Contraseña<input name="password" type="password" minlength="8" required autocomplete="new-password"><span class="hint">Mínimo 8 caracteres.</span></label>
+      ${terms ? `<label class="check consent"><input type="checkbox" name="accept_terms" required> <span>He leído y acepto los <a href="/legal#terminos" target="_blank" rel="noopener">Términos y condiciones</a> <span class="muted">(versión ${esc(terms.version)})</span>.</span></label>
+      <p class="small muted">Conoce cómo tratamos tus datos en el <a href="/legal#privacidad" target="_blank" rel="noopener">Aviso de privacidad</a>. Leerlo no implica dar consentimiento para otras finalidades.</p>`
+        : banner("crit", "No se pudieron cargar los Términos y condiciones", "Vuelve a intentarlo en unos minutos.")}
       <div id="register-error" class="form-error" role="alert" hidden></div>
-      <button class="btn btn-primary btn-block" type="submit">Crear cuenta</button></form></div>`;
+      <button class="btn btn-primary btn-block" type="submit" ${terms ? "" : "disabled"}>Crear cuenta</button></form></div>`;
   $("#register-form").onsubmit = async (e) => {
     e.preventDefault();
+    const f = new FormData(e.target);
+    const payload = { full_name: f.get("full_name"), email: f.get("email"), password: f.get("password"), accept_terms: f.get("accept_terms") === "on", terms_version: terms?.version };
     try {
-      const res = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+      const res = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Revisa los datos ingresados.");
       modal.close();

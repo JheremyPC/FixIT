@@ -1,8 +1,12 @@
+import logging
 import os
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.models import Area, Category, Priority, Role, Setting, Specialty, TicketState, User
 from app.security.auth import hash_password
 from app.services.assignment import WEIGHT_DEFAULTS
+
+log = logging.getLogger("fixit.seed")
 
 
 def seed(db: Session):
@@ -19,5 +23,12 @@ def seed(db: Session):
         if not db.get(Setting,key): db.add(Setting(key=key,value=str(value),description="Peso del algoritmo de asignación"))
     db.flush()
     if not db.query(User).filter_by(email="admin@fixit.org").first():
-        db.add(User(full_name="Administrador FixIT",email="admin@fixit.org",password_hash=hash_password(os.getenv("FIXIT_ADMIN_PASSWORD", "ChangeThisPassword!")),role_id=db.query(Role).filter_by(code="ADMIN").one().id))
+        # No built-in default password: without FIXIT_ADMIN_PASSWORD the initial administrator is not created.
+        password = os.getenv("FIXIT_ADMIN_PASSWORD", "")
+        if len(password) >= 8:
+            db.add(User(full_name="Administrador FixIT",email="admin@fixit.org",password_hash=hash_password(password),role_id=db.query(Role).filter_by(code="ADMIN").one().id))
+        else:
+            log.warning("FIXIT_ADMIN_PASSWORD no está definida (mínimo 8 caracteres): no se creó el administrador inicial")
+    if len(settings.jwt_secret_key) < 32:
+        log.warning("JWT_SECRET_KEY tiene menos de 32 caracteres; use un valor aleatorio largo")
     db.commit()

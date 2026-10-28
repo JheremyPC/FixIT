@@ -1,12 +1,10 @@
 import csv
 import io
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from jose import JWTError, jwt
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from app.core.config import settings
@@ -14,10 +12,11 @@ from app.core.database import get_db
 from app.core.errors import forbidden, not_found
 from app.models import *
 from app.schemas import *
-from app.security.auth import ALGORITHM, create_token, current_user, hash_password, require_roles, verify_password
-from app.security.demo_access import demo_session_blocked, is_demo_email  # DEMO_ACCESS_TEMPORARY
+from app.security.auth import DUMMY_HASH, JWTError, create_token, current_user, decode_token, hash_password, require_roles, verify_password
+from app.security.hardening import client_ip, login_throttle
 from app.services.assignment import AssignmentService, WEIGHT_DEFAULTS
 from app.services.audit import audit, history, notify
+from app.services.exports import append_xlsx_row, safe_row
 from app.services.tickets import assign, initial_due, next_number, set_state, state
 from app.synthetic.catalog import SYNTHETIC_TICKET_PREFIX
 
@@ -47,34 +46,52 @@ def can_access_ticket(user, ticket, write=False):
     if role == "TECNICO" and user.technician and ticket.technician_id == user.technician.id: return
     forbidden()
 
+def throttled(retry_after: int):
+    raise HTTPException(429, "Demasiados intentos fallidos. Espere unos minutos antes de volver a intentarlo.", headers={"Retry-After": str(retry_after)})
+
 @api.post("/auth/login", response_model=TokenOut)
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).options(joinedload(User.role)).filter(func.lower(User.email) == payload.email.lower()).first()
-    if not user or not user.active or not verify_password(payload.password, user.password_hash):
+    """Failed attempts are limited per account (and optionally per IP, LOGIN_IP_MAX_FAILURES) within a sliding window;
+    the response never reveals whether the account exists."""
+    email = payload.email.lower()
+    keys = [(f"user:{email}", settings.login_max_failures), (f"ip:{client_ip(request)}", settings.login_ip_max_failures)]
+    wait = max(login_throttle.retry_after(key, limit) for key, limit in keys)
+    if wait: throttled(wait)
+    user = db.query(User).options(joinedload(User.role)).filter(func.lower(User.email) == email).first()
+    # The hash is always checked (a dummy one for unknown accounts), so timing does not reveal which accounts exist.
+    valid = verify_password(payload.password, user.password_hash if user else DUMMY_HASH)
+    if not user or not user.active or not valid:
+        blocked = [login_throttle.fail(key, limit) for key, limit in keys][0]
+        if user:  # unknown e-mails are not stored: they would let anyone fill the trail with arbitrary text
+            audit(db, user.id, "LOGIN_FALLIDO", "AUTH", "USER", user.id, new={"motivo": "cuenta inactiva" if not user.active else "credenciales inválidas"},
+                  request=request, outcome="FALLO")
+            if blocked: audit(db, user.id, "LOGIN_BLOQUEADO", "AUTH", "USER", user.id, new={"minutos": settings.login_window_minutes},
+                              request=request, outcome="DENEGADO")
+            db.commit()
         raise HTTPException(401, "Correo o contraseña inválidos")
+    login_throttle.reset(keys[0][0])
     audit(db, user.id, "LOGIN", "AUTH", "USER", user.id, request=request); db.commit()
     return {"access_token": create_token(user, "access"), "refresh_token": create_token(user, "refresh"), "user": user_data(user)}
 
 @api.post("/auth/register", status_code=201)
-def register(payload: UserCreate, request: Request, db: Session = Depends(get_db)):
-    """Self-registration intentionally always grants the least-privileged role."""
+def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
+    """Self-registration intentionally always grants the least-privileged role and requires accepting the current terms."""
+    from app.api.legal import record_acceptance
+    if not payload.accept_terms: raise HTTPException(422, "Debe aceptar los Términos y condiciones para crear la cuenta")
     if db.query(User).filter(func.lower(User.email) == payload.email.lower()).first(): raise HTTPException(409, "El correo ya existe")
-    if is_demo_email(payload.email): raise HTTPException(422, "Dominio de correo reservado")  # DEMO_ACCESS_TEMPORARY
     role=db.query(Role).filter_by(code="USUARIO").one()
     if payload.area_id and not db.get(Area,payload.area_id): not_found("Área")
     user=User(full_name=payload.full_name,email=payload.email.lower(),password_hash=hash_password(payload.password),role_id=role.id,area_id=payload.area_id)
-    db.add(user);db.flush();audit(db,user.id,"REGISTRO","AUTH","USER",user.id,new={"email":user.email},request=request);db.commit()
+    db.add(user);db.flush();audit(db,user.id,"REGISTRO","AUTH","USER",user.id,new={"email":user.email},request=request)
+    record_acceptance(db, user, "terminos", payload.terms_version or "", request);db.commit()
     return {"id":user.id}
 
 @api.post("/auth/refresh", response_model=TokenOut)
 def refresh(payload: RefreshIn, db: Session = Depends(get_db)):
     try:
-        claims = jwt.decode(payload.refresh_token, settings.jwt_secret_key, algorithms=[ALGORITHM])
-        if claims.get("type") != "refresh": raise JWTError()
-        user = db.query(User).options(joinedload(User.role)).get(claims.get("sub"))
+        user = db.query(User).options(joinedload(User.role)).filter(User.id == decode_token(payload.refresh_token, "refresh").get("sub")).first()
     except JWTError: user = None
     if not user or not user.active: raise HTTPException(401, "Refresh token inválido")
-    if demo_session_blocked(user): raise HTTPException(401, "Accesos de demostración desactivados")  # DEMO_ACCESS_TEMPORARY
     return {"access_token": create_token(user, "access"), "refresh_token": create_token(user, "refresh"), "user": user_data(user)}
 
 @api.get("/auth/me")
@@ -98,13 +115,17 @@ def create_user(payload: UserCreate, request: Request, actor: User = Depends(req
 def update_user(user_id: str, payload: UserUpdate, request: Request, actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db)):
     item = db.get(User, user_id)
     if not item: not_found("Usuario")
-    old = {"full_name":item.full_name,"active":item.active,"role_id":item.role_id}
+    # An administrator cannot lock themselves out (deactivate or demote their own account).
+    if item.id == actor.id and (payload.active is False or (payload.role_code and payload.role_code != "ADMIN")):
+        raise HTTPException(422, "No puede desactivar ni cambiar el rol de su propia cuenta")
+    if payload.area_id and not db.get(Area, payload.area_id): not_found("Área")
+    old = {"full_name":item.full_name,"active":item.active,"role":item.role.code,"area_id":item.area_id}
     for key, value in payload.model_dump(exclude_unset=True, exclude={"role_code"}).items(): setattr(item, key, value)
     if payload.role_code:
         role = db.query(Role).filter_by(code=payload.role_code).first()
         if not role: raise HTTPException(422, "Rol inválido")
-        item.role_id = role.id
-    audit(db, actor.id, "ACTUALIZAR", "USUARIOS", "USER", item.id, old, {"full_name":item.full_name,"active":item.active,"role_id":item.role_id}, request); db.commit(); return user_data(item)
+        item.role = role
+    audit(db, actor.id, "ACTUALIZAR", "USUARIOS", "USER", item.id, old, {"full_name":item.full_name,"active":item.active,"role":item.role.code,"area_id":item.area_id}, request); db.commit(); return user_data(item)
 
 def catalog(model, db): return [{"id":x.id,"name":x.name,"active":getattr(x,"active",True)} for x in db.query(model).order_by(model.name).all()]
 
@@ -128,10 +149,11 @@ def create_catalog(kind: str, payload: EntityIn, request: Request, actor: User =
 
 @api.post("/priorities", status_code=201)
 def create_priority(payload: PriorityIn, request: Request, actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db)):
+    if db.query(Priority).filter((Priority.code==payload.code)|(Priority.level==payload.level)).first(): raise HTTPException(409,"Ya existe una prioridad con ese código o nivel")
     item=Priority(**payload.model_dump()); db.add(item); db.flush(); audit(db,actor.id,"CREAR","CATALOGOS","PRIORITY",item.id,new=payload.model_dump(),request=request); db.commit(); return {"id":item.id}
 
 @api.get("/technicians")
-def technicians(db: Session = Depends(get_db), _: User = Depends(current_user)):
+def technicians(db: Session = Depends(get_db), _: User = Depends(require_roles("ADMIN","JEFE_TI"))):
     rows=db.query(Technician).options(joinedload(Technician.user),joinedload(Technician.specialties).joinedload(TechnicianSpecialty.specialty)).all()
     return [{"id":x.id,"user_id":x.user_id,"name":x.user.full_name,"email":x.user.email,"available":x.available,"max_load":x.max_load,"specialties":[s.specialty.name for s in x.specialties]} for x in rows]
 
@@ -150,10 +172,12 @@ def create_technician(payload: TechnicianIn, request: Request, actor: User = Dep
 def update_technician(technician_id: str, payload: TechnicianIn, request: Request, actor: User = Depends(require_roles("ADMIN")), db: Session = Depends(get_db)):
     item=db.get(Technician,technician_id)
     if not item: not_found("Técnico")
+    ids=set(payload.specialty_ids)
+    if db.query(Specialty).filter(Specialty.id.in_(ids)).count()!=len(ids): raise HTTPException(422,"Especialidades inválidas")
     item.available = payload.available
     item.max_load = payload.max_load
     db.query(TechnicianSpecialty).filter_by(technician_id=item.id).delete()
-    db.add_all([TechnicianSpecialty(technician_id=item.id,specialty_id=s) for s in set(payload.specialty_ids)])
+    db.add_all([TechnicianSpecialty(technician_id=item.id,specialty_id=s) for s in ids])
     audit(db,actor.id,"ACTUALIZAR","TECNICOS","TECHNICIAN",item.id,new={"available":item.available},request=request);db.commit();return {"id":item.id}
 
 @api.post("/tickets", status_code=201)
@@ -238,15 +262,33 @@ def comment(ticket_id: str,payload: CommentIn,request: Request,actor: User=Depen
     for user_id in recipients-{actor.id}:notify(db,user_id,"COMENTARIO",f"Actualización en {item.number}","Hay un nuevo comentario.",item.id)
     audit(db,actor.id,"COMENTAR","TICKETS","TICKET",item.id,request=request);db.commit();return {"id":c.id}
 
-ALLOWED_TYPES={"image/png","image/jpeg","application/pdf","text/plain"}
+# Declared type -> stored extension. The content must match the type (magic bytes / UTF-8 text): the client's
+# filename and Content-Type alone are never trusted.
+ALLOWED_TYPES={"image/png":".png","image/jpeg":".jpg","application/pdf":".pdf","text/plain":".txt"}
+SIGNATURES={"image/png":(b"\x89PNG\r\n\x1a\n",),"image/jpeg":(b"\xff\xd8\xff",),"application/pdf":(b"%PDF-",)}
+
+def content_matches(content_type: str, raw: bytes) -> bool:
+    if content_type == "text/plain":
+        try: text = raw.decode("utf-8")
+        except UnicodeDecodeError: return False
+        return "\x00" not in text
+    return raw.startswith(SIGNATURES[content_type])
+
+def safe_filename(name: str | None) -> str:
+    base = Path((name or "").replace("\\", "/")).name
+    base = "".join(c for c in base if c.isprintable() and c not in '<>:"/\\|?*').strip(" .")
+    return base[:200] or "archivo"
+
 @api.post("/tickets/{ticket_id}/attachments", status_code=201)
 async def attachment(ticket_id: str,file: UploadFile=File(...),request: Request=None,actor: User=Depends(current_user),db: Session=Depends(get_db)):
     item=get_ticket(db,ticket_id);can_access_ticket(actor,item)
-    if file.content_type not in ALLOWED_TYPES: raise HTTPException(415,"Tipo de archivo no permitido")
-    raw=await file.read()
+    content_type=(file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in ALLOWED_TYPES: raise HTTPException(415,"Tipo de archivo no permitido")
+    raw=await file.read(settings.max_upload_bytes+1)
     if not raw or len(raw)>settings.max_upload_bytes: raise HTTPException(413,"Archivo vacío o excede el máximo permitido")
-    suffix=Path(file.filename or "").suffix.lower(); stored=f"{uuid.uuid4()}{suffix}"; (settings.upload_path/stored).write_bytes(raw)
-    record=TicketAttachment(ticket_id=item.id,uploader_id=actor.id,original_name=Path(file.filename or "archivo").name,stored_name=stored,content_type=file.content_type,size=len(raw));db.add(record);history(db,item.id,actor.id,"ADJUNTO","Evidencia adjunta");audit(db,actor.id,"ADJUNTAR","TICKETS","TICKET",item.id,request=request);db.commit();return {"id":record.id}
+    if not content_matches(content_type, raw): raise HTTPException(415,"El contenido del archivo no corresponde a su tipo")
+    stored=f"{uuid.uuid4()}{ALLOWED_TYPES[content_type]}"; (settings.upload_path/stored).write_bytes(raw)
+    record=TicketAttachment(ticket_id=item.id,uploader_id=actor.id,original_name=safe_filename(file.filename),stored_name=stored,content_type=content_type,size=len(raw));db.add(record);db.flush();history(db,item.id,actor.id,"ADJUNTO","Evidencia adjunta");audit(db,actor.id,"ADJUNTAR","TICKETS","TICKET",item.id,new={"adjunto_id":record.id,"tipo":content_type,"bytes":len(raw)},request=request);db.commit();return {"id":record.id}
 
 @api.get("/attachments/{attachment_id}")
 def download_attachment(attachment_id: str,user: User=Depends(current_user),db: Session=Depends(get_db)):
@@ -306,11 +348,6 @@ def dashboard(actor: User=Depends(current_user),db: Session=Depends(get_db)):
             performance.append({"name":tech.user.full_name,"assigned":len(mine),"resolved":sum(t.state.code in {"RESUELTO","CERRADO"} for t in mine),"rating":round(float(score),2)})
     return {"total":len(tickets),"counts":counts,"critical":sum(t.priority.code in {"CRITICA","ALTA"} for t in tickets),"overdue":sum(bool(t.due_at) and (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc))<now and t.state.code not in {"RESUELTO","CERRADO","CANCELADO"} for t in tickets),"avg_attention_hours":avg_attention,"avg_resolution_hours":avg_resolution,"satisfaction":round(float(ratings),2),"by_category":by_category,"by_priority":by_priority,"by_area":by_area,"by_state":by_state,"trend":trend,"trend_monthly":trend_monthly,"synthetic_total":synthetic_total,"technician_performance":performance}
 
-@api.get("/audit")
-def audit_list(_: User=Depends(require_roles("ADMIN","JEFE_TI")),db: Session=Depends(get_db)):
-    rows=db.query(AuditLog).options(joinedload(AuditLog.user)).order_by(AuditLog.created_at.desc()).limit(500).all()
-    return [{"id":x.id,"user":x.user.full_name if x.user else "Sistema","action":x.action,"module":x.module,"entity":x.entity,"entity_id":x.entity_id,"created_at":x.created_at,"ip":x.ip} for x in rows]
-
 @api.get("/settings")
 def get_settings(_: User=Depends(require_roles("ADMIN")),db: Session=Depends(get_db)):
     return [{"key":x.key,"value":x.value,"description":x.description} for x in db.query(Setting).order_by(Setting.key)]
@@ -329,9 +366,8 @@ def update_setting(key: str,payload: SettingIn,request: Request,actor: User=Depe
 
 @api.get("/reports/tickets.csv")
 def tickets_report(_: User=Depends(require_roles("ADMIN","JEFE_TI")),db: Session=Depends(get_db)):
-    rows=db.query(Ticket).options(joinedload(Ticket.state),joinedload(Ticket.priority),joinedload(Ticket.area),joinedload(Ticket.category),joinedload(Ticket.technician).joinedload(Technician.user)).order_by(Ticket.created_at.desc()).all()
     output=io.StringIO();writer=csv.writer(output);writer.writerow(["Número","Título","Estado","Prioridad","Área","Categoría","Técnico","Creado","Vencimiento"])
-    for t in rows:writer.writerow([t.number,t.title,t.state.code,t.priority.code,t.area.name,t.category.name,t.technician.user.full_name if t.technician else "",t.created_at,t.due_at])
+    for t in report_rows(db):writer.writerow(safe_row([t.number,t.title,t.state.code,t.priority.code,t.area.name,t.category.name,t.technician.user.full_name if t.technician else "",str(t.created_at),str(t.due_at or "")]))
     return StreamingResponse(iter([output.getvalue()]),media_type="text/csv",headers={"Content-Disposition":"attachment; filename=fixit-tickets.csv"})
 
 def report_rows(db):
@@ -345,7 +381,7 @@ def tickets_xlsx(_: User=Depends(require_roles("ADMIN","JEFE_TI")),db: Session=D
     headers=["Número","Título","Estado","Prioridad","Área","Categoría","Técnico","Creado","Vencimiento"]
     sheet.append(headers)
     for cell in sheet[1]: cell.font=Font(bold=True)
-    for t in report_rows(db): sheet.append([t.number,t.title,t.state.code,t.priority.code,t.area.name,t.category.name,t.technician.user.full_name if t.technician else "",str(t.created_at),str(t.due_at or "")])
+    for t in report_rows(db): append_xlsx_row(sheet,[t.number,t.title,t.state.code,t.priority.code,t.area.name,t.category.name,t.technician.user.full_name if t.technician else "",str(t.created_at),str(t.due_at or "")])
     for col in sheet.columns: sheet.column_dimensions[col[0].column_letter].width=min(45,max(12,max(len(str(c.value or "")) for c in col)+2))
     buffer=io.BytesIO();workbook.save(buffer);buffer.seek(0)
     return StreamingResponse(buffer,media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":"attachment; filename=fixit-tickets.xlsx"})

@@ -5,10 +5,11 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import create_engine, text
+
+from app.services.audit import sealed_fields
 
 logger = logging.getLogger("fixit.automation")
 
@@ -134,27 +135,29 @@ class AutomationWorker:
             "event_type": event["event_type"],
             "source_table": event["source_table"],
         }
+        # Same normalization and seal as app.services.audit.audit() (see docs/auditoria.md).
+        fields = sealed_fields(
+            actor_id, action, "AUTOMATION", "TICKET", entity_id, old_value, {**payload, "data": new_value},
+            ip="SYSTEM", user_agent="FixIT Automation Worker",
+        )
         conn.execute(
             text(
                 """
                 INSERT INTO audit_logs(
                     id, user_id, action, module, entity, entity_id,
-                    old_value, new_value, ip, user_agent, created_at
+                    old_value, new_value, ip, user_agent, outcome, integrity_hash, created_at
                 )
                 VALUES(
-                    :id, :user_id, :action, 'AUTOMATION', 'TICKET', :entity_id,
+                    :id, :user_id, :action, :module, :entity, :entity_id,
                     CAST(:old_value AS json), CAST(:new_value AS json),
-                    'SYSTEM', 'FixIT Automation Worker', NOW()
+                    :ip, :user_agent, :outcome, :integrity_hash, :created_at
                 )
                 """
             ),
             {
-                "id": str(uuid.uuid4()),
-                "user_id": actor_id,
-                "action": action[:80],
-                "entity_id": entity_id,
-                "old_value": _json(old_value),
-                "new_value": _json({**payload, "data": new_value}),
+                **fields,
+                "old_value": _json(fields["old_value"]),
+                "new_value": _json(fields["new_value"]),
             },
         )
 

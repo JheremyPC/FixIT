@@ -202,7 +202,10 @@ class Notification(Base):
 
 
 class AuditLog(Base):
+    """Append-only trail (see app.services.audit): no endpoint edits it and, on PostgreSQL, a trigger rejects
+    UPDATE/DELETE/TRUNCATE. ``integrity_hash`` is the per-record HMAC seal; ``outcome`` is EXITO, FALLO or DENEGADO."""
     __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created_at", "created_at"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
     action: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -213,8 +216,23 @@ class AuditLog(Base):
     new_value: Mapped[dict | None] = mapped_column(JSON)
     ip: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(500))
+    outcome: Mapped[str] = mapped_column(String(20), default="EXITO", server_default="EXITO", nullable=False)
+    integrity_hash: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     user: Mapped[User | None] = relationship()
+
+
+class TermsAcceptance(Base):
+    """Express acceptance of a legal document version by a user (see app.legal). Never created on the user's behalf."""
+    __tablename__ = "terms_acceptances"
+    __table_args__ = (UniqueConstraint("user_id", "document", "version", name="uq_terms_acceptance"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    document: Mapped[str] = mapped_column(String(30), nullable=False)
+    version: Mapped[str] = mapped_column(String(30), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(500))
 
 
 class Setting(Base):

@@ -26,6 +26,7 @@ from app.core.database import Base
 from app.models import (Area, AuditLog, Category, Notification, Priority, Rating, Role, Setting, Specialty, Technician,
                         TechnicianSpecialty, Ticket, TicketAssignment, TicketAttachment, TicketComment, TicketHistory,
                         TicketState, User)
+from app.services.audit import sealed_fields
 from app.synthetic import catalog as C
 from app.synthetic.generator import SyntheticDataset
 
@@ -289,7 +290,7 @@ def import_dataset(engine: Engine, ds: SyntheticDataset, replace: bool = False) 
         else:
             db.add(Setting(key=C.SYNTHETIC_SETTING_KEY, value=json.dumps(meta, ensure_ascii=False),
                            description="Metadatos del dataset sintético importado (solo entorno local)"))
-        db.add(AuditLog(user_id=None, action="IMPORTAR_SINTETICOS", module="DATOS", entity="DATASET", entity_id=None,
-                        new_value={"params": ds.params, "tickets": summary["tickets"]}, ip="CLI", user_agent="fixit-synthetic"))
+        db.add(AuditLog(**sealed_fields(None, "IMPORTAR_SINTETICOS", "DATOS", "DATASET", None,
+                                        new={"params": ds.params, "tickets": summary["tickets"]}, ip="CLI", user_agent="fixit-synthetic")))
         db.execute(update(User).where(synthetic_user_filter()).values(active=True))
     return {"imported": summary, "purged_before": purged}

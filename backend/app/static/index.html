@@ -7,9 +7,7 @@
   <meta name="description" content="FixIT: mesa de ayuda de soporte técnico con Machine Learning y agentes de IA.">
   <title>FixIT · Soporte técnico</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%23142033%27/%3E%3Cpath d=%27M10 9h12v3.2h-8.4v3.3h7v3.1h-7V23H10z%27 fill=%27%23f4f6fa%27/%3E%3Ccircle cx=%2723.5%27 cy=%2721.5%27 r=%272.5%27 fill=%27%234f7cf0%27/%3E%3C/svg%3E">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="preload" href="/static/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -40,8 +38,7 @@
         </form>
         <div id="login-error" class="form-error" role="alert" hidden></div>
         <p class="auth-alt">¿No tienes cuenta? <button type="button" class="btn btn-link" id="show-register">Crear cuenta de solicitante</button></p>
-        <!-- DEMO_ACCESS_TEMPORARY: filled by demo-access.js only when the backend has DEMO_ACCESS_ENABLED=true -->
-        <section id="demo-access" class="demo-access" aria-labelledby="demo-access-title" hidden></section>
+        <p class="auth-legal"><a href="/legal#terminos" target="_blank" rel="noopener">Términos y condiciones</a><span aria-hidden="true">·</span><a href="/legal#privacidad" target="_blank" rel="noopener">Aviso de privacidad</a></p>
       </div>
     </section>
   </div>
@@ -77,6 +74,7 @@
           <b id="unread" class="badge-count" hidden></b>
         </button>
       </header>
+      <div id="legal-notice" class="legal-notice" role="status" hidden></div>
       <section id="content" class="content" tabindex="-1"></section>
     </main>
   </div>
@@ -91,6 +89,7 @@
   <script src="/static/app.js"></script>
   <script src="/static/ai.js"></script>
   <script src="/static/agents.js"></script>
-  <script src="/static/demo-access.js"></script><!-- DEMO_ACCESS_TEMPORARY -->
+  <script src="/static/audit.js"></script>
+  <script src="/static/legal.js"></script>
 </body>
 </html>

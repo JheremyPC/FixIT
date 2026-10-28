@@ -13,9 +13,16 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_upload_bytes: int = 5_242_880
 
-    # DEMO_ACCESS_TEMPORARY: one-click demo accounts on the login screen. Off unless DEMO_ACCESS_ENABLED=true;
-    # turning it off also invalidates every open demo session.
-    demo_access_enabled: bool = False
+    # Hardening (see docs/seguridad.md).
+    api_docs_enabled: bool = False      # /docs, /redoc and /openapi.json; off unless API_DOCS_ENABLED=true
+    trusted_proxy_hops: int = 0         # proxies in front of the app that append to X-Forwarded-For (0: use the socket peer)
+    login_max_failures: int = 10        # failed logins per account within login_window_minutes before a temporary block
+    login_ip_max_failures: int = 0      # same, per client IP; 0 disables it (behind a shared proxy every client has the same IP)
+    login_window_minutes: int = 15
+    # Key of the per-record audit seals (HMAC-SHA256). Empty: derived from JWT_SECRET_KEY, so rotating that
+    # secret leaves older records verifiable only with the previous key (reported as "CLAVE_DISTINTA").
+    audit_hmac_key: SecretStr | None = None
+    audit_export_max_rows: int = 50_000
 
     # Machine Learning: trained artifacts live outside Git (see .gitignore).
     ml_model_dir: str = str(BACKEND_DIR / "ml_models")

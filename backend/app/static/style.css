@@ -1,6 +1,9 @@
 /* FixIT — design system ------------------------------------------------------
  * One cool-neutral gray family, one accent (cobalt), semantic status colors and a
  * validated categorical chart palette. Light and dark themes share the same tokens. */
+/* Geist and Geist Mono (SIL Open Font License 1.1, fonts/OFL.txt), served by FixIT itself: no third-party requests. */
+@font-face{font-family:"Geist";src:url("/static/fonts/Geist-Variable.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Geist Mono";src:url("/static/fonts/GeistMono-Variable.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 :root{
   color-scheme: light;
   --bg:#f4f5f8; --surface:#ffffff; --surface-2:#f8f9fb; --surface-3:#eef0f4; --surface-sunk:#e9ecf1;
@@ -165,22 +168,11 @@ form{display:grid;gap:16px}
 .auth-card h2{font-size:26px;letter-spacing:-.03em;margin-bottom:4px}
 .auth-card form{margin-top:28px}
 .auth-alt{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13.5px}
-/* DEMO_ACCESS_TEMPORARY: "Accesos de demostración" panel (demo-access.js) — begin */
-.demo-access{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
-.demo-access h3{font-size:14.5px}
-.demo-access > p{color:var(--muted);font-size:13px;margin:2px 0 0}
-.demo-roles{list-style:none;margin:12px 0 0;padding:0;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow-sm)}
-.demo-role{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
-.demo-role + .demo-role{border-top:1px solid var(--line)}
-.demo-role div{display:grid;gap:2px;min-width:0}
-.demo-role strong{font-size:13.5px;font-weight:600}
-.demo-role code{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--faint);margin-left:7px}
-.demo-role span{color:var(--muted);font-size:12.5px;line-height:1.4}
-.demo-role .btn{flex:none}
-.demo-access .banner{margin-top:12px;font-size:12.5px}
-.demo-access .banner b{display:inline;margin-right:4px}
-@media (max-width: 440px){.demo-role{flex-direction:column;align-items:stretch;gap:8px}}
-/* DEMO_ACCESS_TEMPORARY — end */
+.auth-legal{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--faint)}
+.auth-legal a{color:var(--muted)}
+.auth-legal a:hover{color:var(--accent-ink)}
+.check.consent{align-items:flex-start;font-weight:400;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.check.consent input{margin-top:3px;flex:none}
 
 /* Shell ----------------------------------------------------------------------- */
 .shell{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr);min-height:100dvh}
@@ -512,6 +504,53 @@ details.data-table .table-wrap{margin-top:10px;max-height:320px}
 .report-ico{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;background:var(--surface-3);color:var(--ink-2);font-family:var(--mono);font-size:11.5px;font-weight:600}
 .report h3{font-size:15px}
 .report p{color:var(--muted);font-size:13px;margin:4px 0 14px}
+
+/* Audit ----------------------------------------------------------------------- */
+.audit-filters label{max-width:200px}
+.audit-filters .search{max-width:none}
+.audit-actions{gap:8px;align-items:end}
+.audit-export{display:flex;gap:12px 20px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+.audit-export p{max-width:80ch}
+.audit-table{max-height:calc(100dvh - 330px);min-height:240px}
+.nowrap{white-space:nowrap}
+.kv{display:grid;gap:0;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2)}
+.kv > div{display:grid;grid-template-columns:minmax(120px,170px) 1fr;gap:12px;padding:9px 14px;align-items:baseline}
+.kv > div + div{border-top:1px solid var(--line)}
+.kv dt{color:var(--muted);font-size:12.5px;font-weight:550}
+.kv dd{margin:0;min-width:0;overflow-wrap:anywhere;font-size:13.5px}
+.small-title{font-size:13px;font-weight:600;margin-bottom:8px}
+pre.json{margin:0;padding:12px 14px;max-height:300px;overflow:auto;background:var(--surface-sunk);border:1px solid var(--line);border-radius:var(--r-md);
+  font:12px/1.55 var(--mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Legal ----------------------------------------------------------------------- */
+.legal-notice{padding:0 clamp(16px,3vw,36px)}
+.legal-notice .banner{max-width:1480px}
+.legal{display:grid;gap:18px;max-width:900px}
+.legal-doc{padding:clamp(20px,3vw,36px);display:grid;gap:22px}
+.legal-head h2{font-size:clamp(22px,2.6vw,28px);letter-spacing:-.03em}
+.legal-head p{color:var(--muted);margin-top:6px;max-width:68ch}
+.legal-meta{display:flex;flex-wrap:wrap;gap:8px 28px;margin:16px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+.legal-meta dt{font-size:12px;color:var(--muted);font-weight:550}
+.legal-meta dd{margin:2px 0 0;font-size:13.5px;font-weight:500}
+.legal-note details{margin-top:8px}
+.legal-note summary{cursor:pointer;font-weight:550;color:var(--warn-ink)}
+.legal-note ul{margin:8px 0 0;padding-left:20px;display:grid;gap:4px}
+.legal-toc{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 18px}
+.legal-toc b{font-size:13px}
+.legal-toc ol{margin:8px 0 0;padding-left:20px;columns:2 220px;column-gap:28px;font-size:13.5px}
+.legal-toc li{break-inside:avoid;padding:2px 0}
+.legal-section{scroll-margin-top:88px}
+.legal-section h3{font-size:16.5px;letter-spacing:-.015em;margin-bottom:8px}
+.legal-section p,.legal-section li{color:var(--ink-2);line-height:1.65;max-width:72ch}
+.legal-section p + p,.legal-section ul + p,.legal-section p + ul{margin-top:10px}
+.legal-section ul{padding-left:20px;display:grid;gap:6px}
+mark.pending{background:var(--warn-soft);color:var(--warn-ink);border:1px dashed color-mix(in srgb,var(--warn) 55%,transparent);border-radius:4px;
+  padding:0 4px;font-weight:600;font-size:.92em;white-space:normal}
+.legal-accept{display:grid;gap:10px;padding-top:20px;border-top:1px solid var(--line)}
+.legal-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px clamp(16px,3vw,36px);border-bottom:1px solid var(--line);
+  background:var(--surface);position:sticky;top:0;z-index:var(--z-topbar)}
+.legal-topbar .brand{text-decoration:none}
+.legal-page{margin:0 auto;max-width:948px}
 
 /* Responsive ------------------------------------------------------------------ */
 @media (max-width: 1200px){

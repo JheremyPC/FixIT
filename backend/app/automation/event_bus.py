@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from collections import defaultdict
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 
 Handler = Callable[[dict[str, Any]], Any]
+logger = logging.getLogger("fixit.automation")
 
 
 class EventBus:
@@ -27,9 +29,8 @@ class EventBus:
                 if inspect.isawaitable(result):
                     await result
             except Exception:
-                # El worker/servicio principal debe registrar el error.
-                # Nunca se propaga al flujo del ticket.
-                continue
+                # Nunca se propaga al flujo del ticket, pero queda registrado.
+                logger.exception("Falló un handler del evento %s", event_type)
 
 
 bus = EventBus()

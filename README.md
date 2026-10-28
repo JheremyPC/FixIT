@@ -4,6 +4,8 @@ Sistema Integral de Gestión de Soporte Técnico: FastAPI, PostgreSQL y una inte
 
 - **Roles:** ADMIN, JEFE_TI, TECNICO y USUARIO, cada uno con su propio panel.
 - **Operación:** tickets, asignación automática ponderada, comentarios, adjuntos, calificaciones, notificaciones, auditoría y reportes (CSV, Excel, PDF).
+- **Auditoría (ADMIN y JEFE_TI):** filtros por fecha, usuario, acción, módulo, entidad y resultado; exportación CSV/JSON con metadatos y sello de integridad por registro. Ver [docs/auditoria.md](docs/auditoria.md).
+- **Términos y privacidad:** páginas `/legal` y «Términos y privacidad» dentro de la app, con aceptación expresa y versionada de los términos. Son un **borrador** con datos pendientes de validación institucional (contenido en `backend/app/legal.py`).
 - **IA (solo ADMIN y JEFE_TI):** tiempo de resolución estimado, riesgo de incumplir SLA con explicación de factores, recomendación de técnicos, proyección de demanda, patrones por periodo/categoría/prioridad/técnico, simulador y métricas de evaluación. Ver [docs/inteligencia-artificial.md](docs/inteligencia-artificial.md).
 - **Asistente LLM (todos los roles):** chat, resumen de tickets, sugerencias de diagnóstico y búsqueda contextual en el historial, respetando los permisos de cada usuario.
 - **Datos sintéticos:** generador reproducible de 5.000 tickets, solo para bases locales. Ver [docs/datos-sinteticos.md](docs/datos-sinteticos.md).
@@ -25,14 +27,6 @@ docker compose exec api python -m app.synthetic import --csv /srv/fixit/outputs/
 ```
 
 El importador rechaza cualquier base remota (Supabase, Render, etc.). Las cuentas de demostración son `<nombre>@sintetico.fixit.example` con la contraseña `Demo!2026` (configurable con `FIXIT_SYNTHETIC_PASSWORD`).
-
-<!-- DEMO_ACCESS_TEMPORARY: begin -->
-### Accesos de demostración (temporal)
-
-Con `DEMO_ACCESS_ENABLED=true` el login muestra un panel para entrar con un clic como Administrador, Jefe de TI, Técnico o Usuario. El backend emite una sesión normal (JWT) para una cuenta fija por rol (`demo.*@demo.fixit.example`, contraseña aleatoria que nadie conoce), así que se aplican los permisos reales de cada rol. El técnico de demostración queda «no disponible» para que la asignación automática no le envíe tickets reales.
-
-Está **desactivado por defecto**; al volver a `false` (o quitar la variable) y reiniciar, el panel desaparece, los endpoints `/api/auth/demo*` responden 404 y las sesiones demo abiertas dejan de ser válidas. La cuenta demo de administrador tiene permisos completos: no lo active en producción. Todo el código está marcado con `DEMO_ACCESS_TEMPORARY`.
-<!-- DEMO_ACCESS_TEMPORARY: end -->
 
 ## Ejecución local sin Docker
 
@@ -57,15 +51,17 @@ $env:PYTHONPATH = "."
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-`tests/conftest.py` crea una base SQLite temporal y una carpeta de modelos temporal; las pruebas nunca usan la base configurada en `.env` ni un proveedor LLM real.
+`tests/conftest.py` crea una base SQLite temporal y una carpeta de modelos temporal; las pruebas nunca usan la base configurada en `.env` ni un proveedor LLM real. Las pruebas específicas de PostgreSQL se ejecutan si `FIXIT_TEST_POSTGRES_URL` apunta a un PostgreSQL **local** (ver `tests/test_synthetic_automation_pg.py`).
 
 ## Producción (Render + Supabase)
 
-- No hay cambios de tablas. La migración `0002_skip_synthetic_automation` solo modifica la función de Supabase `fixit_enqueue_automation_event()` para que una importación de demostración no genere eventos de automatización; en bases sin esa función no hace nada. Los registros sintéticos se identifican por el prefijo `SYN-` y el dominio `@sintetico.fixit.example`; nunca se cargan automáticamente en Supabase (procedimiento manual en `docs/datos-sinteticos.md`).
+- La migración `0002_skip_synthetic_automation` solo modifica la función de Supabase `fixit_enqueue_automation_event()` para que una importación de demostración no genere eventos de automatización; en bases sin esa función no hace nada. Los registros sintéticos se identifican por el prefijo `SYN-` y el dominio `@sintetico.fixit.example`; nunca se cargan automáticamente en Supabase (procedimiento manual en `docs/datos-sinteticos.md`).
 - Variables nuevas opcionales en Render: `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `ML_MODEL_DIR` (ver `.env.example`).
 - Los modelos entrenados se guardan en la base de datos (tabla `ml_artifacts`, migración `0003_ml_artifacts`) y se cargan al iniciar, aunque el disco de Render sea efímero. Si cambia `JWT_SECRET_KEY`, se reentrenan automáticamente en el siguiente arranque.
 - Agentes de IA y monitor del LLM: tablas de la migración `0004_agents_observability` (ver docs/inteligencia-artificial.md).
 - El worker de automatización solo se inicia con PostgreSQL y si existe la tabla `automation_events` (Supabase); en bases locales se desactiva con un aviso.
+- Migración `0005_audit_security` (aditiva): columnas `outcome` e `integrity_hash` en `audit_logs`, tabla `terms_acceptances`, trigger que hace la auditoría de solo inserción, RLS en las tablas propiedad del rol de la aplicación y desactivación (sin borrado) de las cuentas `@demo.fixit.example` del módulo demo retirado. Variables opcionales nuevas: `AUDIT_HMAC_KEY`, `TRUSTED_PROXY_HOPS`, `LOGIN_MAX_FAILURES`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_WINDOW_MINUTES`, `AUDIT_EXPORT_MAX_ROWS`, `API_DOCS_ENABLED`. La variable `DEMO_ACCESS_ENABLED` ya no se usa.
+- Sin `FIXIT_ADMIN_PASSWORD` (mínimo 8 caracteres) no se crea el administrador inicial en una base nueva.
 
 ## Flujo operativo
 
@@ -77,7 +73,9 @@ $env:PYTHONPATH = "."
 
 ## Seguridad
 
-- Contraseñas con bcrypt, JWT de acceso/refresh (renovación automática en el cliente), RBAC y verificación de propiedad por ticket.
+- Contraseñas con bcrypt, JWT HS256 (PyJWT) de acceso/refresh (renovación automática en el cliente), RBAC y verificación de propiedad por ticket.
+- Bloqueo temporal tras intentos fallidos de inicio de sesión, cabeceras de seguridad (CSP sin recursos de terceros, HSTS bajo HTTPS, anti-clickjacking), validación del contenido de los adjuntos, exportaciones protegidas contra inyección de fórmulas y contenedor sin privilegios.
 - Endpoints de ML exclusivos de ADMIN y JEFE_TI. La búsqueda y el asistente solo usan tickets que el usuario puede ver.
 - La API key del LLM vive únicamente en el backend (`SecretStr`); nunca se envía al navegador ni se registra en logs. Las conversaciones no se guardan en la auditoría, solo el uso.
-- Configure TLS, CORS institucional, rotación de refresh tokens y almacenamiento externo de adjuntos antes de exponerlo a Internet.
+- Informe de seguridad, herramientas usadas, riesgos pendientes y pasos de despliegue: [docs/seguridad.md](docs/seguridad.md).
+- Pendiente antes de un uso institucional amplio: revocación de refresh tokens, almacenamiento externo de adjuntos, validación legal de los documentos y verificación en Render de la IP real del cliente (`TRUSTED_PROXY_HOPS`).

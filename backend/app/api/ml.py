@@ -15,6 +15,7 @@ from app.models import User
 from app.schemas import PredictIn, TrainIn
 from app.security.auth import require_roles
 from app.services.audit import audit
+from app.services.exports import safe_row
 
 ml_api = APIRouter(prefix="/api/ml", tags=["machine-learning"])
 ml_roles = require_roles("ADMIN", "JEFE_TI")
@@ -113,8 +114,8 @@ def dataset_csv(source: str = SOURCE, _: User = Depends(ml_roles), db: Session =
     writer.writerow(["number", "synthetic", "created_at", "state", *FEATURES, "target_resolution_hours", "target_sla_breach"])
     for r in records:
         x = r["x"]
-        writer.writerow([r["number"], int(r["synthetic"]), r["created_at"].isoformat(), r["state"],
-                         *[techs.get(x[f], {}).get("name", x[f]) if f == "technician" else x[f] for f in FEATURES],
-                         round(r["y_hours"], 3) if r["y_hours"] is not None else "", "" if r["y_breach"] is None else r["y_breach"]])
+        writer.writerow(safe_row([r["number"], int(r["synthetic"]), r["created_at"].isoformat(), r["state"],
+                                  *[techs.get(x[f], {}).get("name", x[f]) if f == "technician" else x[f] for f in FEATURES],
+                                  round(r["y_hours"], 3) if r["y_hours"] is not None else "", "" if r["y_breach"] is None else r["y_breach"]]))
     return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=fixit-ml-dataset.csv"})

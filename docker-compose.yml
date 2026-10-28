@@ -5,9 +5,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
     ports:
-      - "5432:5432"
+      # Local development only: reachable from this machine, not from the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - fixit-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -26,7 +26,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       ML_MODEL_DIR: /srv/fixit/backend/ml_models
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -36,7 +36,7 @@ services:
       - ./outputs:/srv/fixit/outputs
     command: >
       sh -c "alembic -c /srv/fixit/backend/alembic.ini upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-server-header"
 
 volumes:
   fixit-postgres:
