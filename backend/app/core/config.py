@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     audit_hmac_key: SecretStr | None = None
     audit_export_max_rows: int = 50_000
 
+    # Centro Integral de Auditoría (docs/auditoria.md). AUDIT_DATABASE_URL: optional connection used only by the audit
+    # controls (ideally a read-only role); without it they use DATABASE_URL inside read-only transactions. Never shown.
+    audit_database_url: SecretStr | None = None
+    audit_max_concurrent_runs: int = 1          # executions running at the same time in this process
+    audit_run_max_seconds: int = 900            # remaining controls are reported NO_VERIFICADO once exceeded
+    audit_statement_timeout_ms: int = 15_000    # PostgreSQL statement_timeout of each control's read-only transaction
+    audit_evidence_max_bytes: int = 10_485_760  # manual / correction evidence files
+    audit_import_max_bytes: int = 20_971_520    # imported logs and tool reports
+    audit_import_max_rows: int = 200_000
+
     # Machine Learning: trained artifacts live outside Git (see .gitignore).
     ml_model_dir: str = str(BACKEND_DIR / "ml_models")
 

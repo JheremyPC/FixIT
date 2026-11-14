@@ -136,6 +136,7 @@ const ICONS = {
   close: "M6 6l12 12M18 6 6 18",
   shield: "M12 3 5 6v5.5c0 4.4 3 8.2 7 9.5 4-1.3 7-5.1 7-9.5V6ZM9 12l2 2 4-4",
   filter: "M4 6h16M7 12h10M10 18h4",
+  audit: "M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1ZM8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2M9 13l2 2 4-4",
 };
 const icon = (name, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name] || ICONS.info}"/></svg>`;
 const banner = (tone, title, text = "", extra = "") => `<div class="banner banner-${tone}"><span class="ico">${icon(tone === "crit" || tone === "warn" ? "alert" : "info")}</span><div>${title ? `<b>${esc(title)}</b>` : ""}${esc(text)}${extra}</div></div>`;
@@ -226,7 +227,8 @@ function navItems() {
   if (isSupervisor()) groups.push({ title: "Inteligencia artificial", items: [["ia", "Machine Learning", "model"], ["ia", "Agentes y monitor", "agents", "agentes"]] });
   const manage = [];
   if (role === "ADMIN") manage.push(["admin", "Usuarios y catálogos", "users"], ["settings", "Reglas de asignación", "sliders"]);
-  if (isSupervisor()) manage.push(["audit", "Auditoría", "history"], ["reports", "Reportes", "download"]);
+  if (isSupervisor()) manage.push(["audit", "Centro de auditoría", "audit"], ["reports", "Reportes", "download"]);
+  if (role === "TECNICO") manage.push(["audit", "Mis hallazgos", "audit", "hallazgos"]);
   if (manage.length) groups.push({ title: "Gestión", items: manage });
   groups.push({ title: "Información", items: [["legal", "Términos y privacidad", "shield"]] });
   return groups;
@@ -257,7 +259,7 @@ async function route() {
   const allowed = allowedPages();
   const name = allowed.has(page) && Pages[page] ? page : "dashboard";
   App.page = name;
-  const navSub = name === "ia" && sub === "agentes" ? "agentes" : "";
+  const navSub = name === "ia" && sub === "agentes" ? "agentes" : name === "audit" && App.me.role === "TECNICO" ? "hallazgos" : "";
   $$("#nav [data-page]").forEach((b) => {
     const on = b.dataset.page === name && (b.dataset.sub || "") === navSub;
     b.classList.toggle("active", on);

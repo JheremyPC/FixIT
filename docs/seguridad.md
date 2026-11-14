@@ -1,8 +1,66 @@
-# Informe de seguridad — FixIT 1.1.0
+# Informe de seguridad — FixIT
+
+Este documento reúne los informes de seguridad del repositorio, del más reciente al más antiguo. No contiene secretos.
+
+## FixIT 1.2.0 — Centro Integral de Auditoría (2026-11-14)
+
+Alcance: el nuevo Centro de auditoría (`app/auditing`, `app/api/audit_center.py`, `audit_center.js`, migración `0006`) y su integración con el resto de FixIT. Descripción funcional en [auditoria.md](auditoria.md).
+
+### Herramientas ejecutadas
+
+| Herramienta | Entorno | Resultado |
+|---|---|---|
+| `pytest` (SQLite) | Local | 96 aprobadas, 6 omitidas (requieren PostgreSQL) |
+| `pytest` con `FIXIT_TEST_POSTGRES_URL` | PostgreSQL 16 en Docker local | Suite completa: 102/102 aprobadas, 0 omitidas (incluye 3 pruebas nuevas de PostgreSQL: migraciones, `downgrade` en base de prueba, 106 controles en PostgreSQL y escenario de exposición) |
+| `alembic upgrade head` | PostgreSQL 16 local | 0001 → 0006 sobre base vacía; 0005 → 0006 sobre base con datos (contenido idéntico antes y después, verificado con md5); `downgrade` 0006 → 0005 y nuevo `upgrade` solo en bases de prueba |
+| Bandit 1.x (`bandit -r app`) | Local | 0 altos, 0 medios, 1 bajo (B105, falso positivo preexistente: `"access"` es un tipo de token). La única consulta con formato del Centro (conteo de filas huérfanas con identificadores del catálogo) está justificada con `# nosec B608` |
+| pip-audit (`-r requirements.txt`) | Local | Sin vulnerabilidades conocidas en 58 dependencias |
+| OWASP ZAP Baseline (pasivo) | Imagen Docker de FixIT en una red Docker aislada con PostgreSQL de prueba | 0 FAIL, 2 WARN (10027 comentarios en JS y 10049 contenido no almacenable: falsos positivos ya justificados en 4.3), 66 reglas superadas |
+| `node --check` | Scripts del cliente | Sin errores de sintaxis |
+| Chromium (Playwright) | Servidor local sobre PostgreSQL de prueba | ADMIN, JEFE_TI, TECNICO y USUARIO en escritorio (1366 px), tableta (820 px) y móvil (390 px): 12 secciones, fichas de ejecución, hallazgo y control, formulario de nueva auditoría y descarga real del informe ejecutivo. 0 errores de JavaScript, 0 desbordamientos horizontales; USUARIO no ve ni abre el Centro; TECNICO solo ve sus hallazgos |
+
+No se ejecutaron escaneos activos ni pruebas contra producción (Render/Supabase). Las auditorías del Centro sobre producción las ejecuta un ADMIN o JEFE_TI desde la aplicación desplegada; son de solo lectura.
+
+### Controles de seguridad del Centro
+
+| Riesgo | Mitigación |
+|---|---|
+| Acceso indebido a resultados, evidencias o informes | Autorización por rol en cada endpoint; técnicos limitados a hallazgos y tareas asignados (404 para lo demás); denegaciones registradas |
+| Modificación de datos por una auditoría | Conexión dedicada con transacciones `READ ONLY` (PostgreSQL) o `query_only` (SQLite), siempre revertidas; prueba que compara usuarios, tickets, historial, asignaciones, comentarios, calificaciones y registros previos antes y después de una auditoría completa |
+| Ejecución de SQL o comandos desde el navegador | No existe: controles definidos en el código; las herramientas externas se importan como informes |
+| Exposición de secretos o datos personales en resultados e informes | Redacción de claves sensibles y de secretos en texto, correos e IP enmascarados, URL de conexión nunca mostrada, rutas absolutas eliminadas de errores e informes de herramientas |
+| Archivos maliciosos | Validación por contenido (firmas, UTF-8, JSON, sin HTML/scripts), tamaño máximo, nombre aleatorio fuera del directorio web, descarga solo como adjunto y con autorización |
+| CSV injection | Celdas neutralizadas en `hallazgos.csv` y en los registros del paquete |
+| Alteración de resultados o informes | Sello HMAC de los resultados (`REG-08`), SHA-256 de cada informe y manifiesto en el ZIP (no es firma digital) |
+| Cierre artificial de hallazgos | Cierre solo con evidencia de corrección y verificación posterior en la que no se reproduzca; aceptación de riesgo con justificación, responsable autorizado y fecha de revisión |
+| Ejecuciones duplicadas o sin fin | `UPDATE` condicional al tomar una ejecución, límite de concurrencia, cola y duración; recuperación tras reinicios |
+| Tablas nuevas expuestas en Supabase | RLS habilitado sin políticas en las 10 tablas nuevas (migración 0006) |
+
+### Defectos encontrados y corregidos durante la implementación
+
+| Defecto | Corrección |
+|---|---|
+| FastAPI 0.162 conserva los routers incluidos como `_IncludedRouter`: el inventario de rutas solo veía 3 rutas | Recorrido recursivo de routers incluidos (compatible con ambas estructuras); ahora se inventarían 90 rutas |
+| `SEG-PWD-01` fallaba en PostgreSQL (`GROUP BY` con parámetros enlazados) | Límites literales; la prueba de PostgreSQL ejecuta ahora los 106 controles |
+| La redacción de secretos alteraba texto normal («Authorization: …», «contraseña mínima») | Patrones limitados a `clave=valor`, SQL `PASSWORD '…'`, JWT, URL con credenciales y claves de API |
+
+### Hallazgos que el propio Centro reporta sobre FixIT (no corregidos en esta entrega)
+
+Son observaciones reales que quedan registradas como hallazgos al ejecutar la auditoría; se documentan para su gestión, no se ocultan:
+
+* `REG-05`: no se registran las denegaciones 403 fuera de los módulos de auditoría, las descargas de reportes de tickets (CSV/Excel/PDF), la descarga del dataset de ML ni la de adjuntos.
+* `SEG-PWD-02`: no hay MFA ni verificación contra contraseñas filtradas.
+* `SEG-SES-01`: tokens en `localStorage` sin revocación individual (riesgo aceptado en 4.2).
+* `PRI-01`/`PRI-02`: documentos legales en borrador con datos institucionales pendientes.
+* Controles MANUAL (`CON-*`, `INF-10`, `REG-07`, `PRI-07` a `PRI-10`) quedan **No verificado** hasta que se adjunte evidencia.
+
+---
+
+## FixIT 1.1.0 (2026-10-28)
 
 Fecha: 2026-10-28 · Alcance: repositorio FixIT (backend FastAPI, frontend estático, migraciones, Docker) en el commit que introduce este informe. No contiene secretos.
 
-## 1. Alcance y método
+### 1. Alcance y método
 
 | Área | Qué se revisó |
 |---|---|
@@ -32,7 +90,7 @@ Fecha: 2026-10-28 · Alcance: repositorio FixIT (backend FastAPI, frontend está
 
 Las pruebas activas se ejecutaron solo contra un contenedor local con una base PostgreSQL desechable. **No se escaneó producción** (ver 5).
 
-## 2. Hallazgos corregidos
+### 2. Hallazgos corregidos
 
 | # | Severidad | Hallazgo | Corrección |
 |---|---|---|---|
@@ -55,7 +113,7 @@ Las pruebas activas se ejecutaron solo contra un contenedor local con una base P
 | 17 | Baja | Excepciones silenciadas en `event_bus` y errores 500 sin registro | Se registran en el log sin datos sensibles |
 | 18 | Info | Inyección en registros (CR/LF, ANSI) y secretos en valores auditados | Normalización de caracteres de control y redacción de claves sensibles |
 
-## 3. Controles verificados sin cambios
+### 3. Controles verificados sin cambios
 
 - Consultas SQL: todas vía SQLAlchemy con parámetros; los filtros nuevos validan formato y escapan comodines `LIKE`.
 - Acceso a objetos: tickets, comentarios internos, adjuntos, resúmenes de IA y búsqueda respetan rol y propiedad (pruebas con dos solicitantes y dos técnicos).
@@ -63,9 +121,9 @@ Las pruebas activas se ejecutaron solo contra un contenedor local con una base P
 - CSRF: no aplica; la API usa el encabezado `Authorization` (sin cookies) y no hay CORS habilitado, por lo que solo el mismo origen puede leer respuestas.
 - Proveedores de IA: la clave vive solo en el backend; los errores del proveedor se muestran con secretos redactados.
 
-## 4. Riesgos pendientes y decisiones
+### 4. Riesgos pendientes y decisiones
 
-### 4.1 Pendientes que requieren acción fuera del código
+#### 4.1 Pendientes que requieren acción fuera del código
 
 | Severidad | Pendiente | Acción recomendada |
 |---|---|---|
@@ -76,7 +134,7 @@ Las pruebas activas se ejecutaron solo contra un contenedor local con una base P
 | Baja | `AUDIT_HMAC_KEY` no definida: el sello usa una clave derivada de `JWT_SECRET_KEY` | Definir una clave larga y estable en Render; rotar `JWT_SECRET_KEY` deja registros como `CLAVE_DISTINTA` |
 | Baja | HSTS depende de que Render envíe `X-Forwarded-Proto: https` | Verificar la cabecera en producción |
 
-### 4.2 Riesgos aceptados o fuera de alcance
+#### 4.2 Riesgos aceptados o fuera de alcance
 
 - **Tokens en `localStorage`**: un XSS permitiría robarlos. Mitigado con la CSP (`script-src 'self'`) y el escape sistemático; pasar a cookies `HttpOnly` cambiaría la autenticación e introduciría CSRF.
 - **Sin revocación individual de refresh tokens** (7 días) ni cierre de sesión en el servidor. Desactivar la cuenta invalida sus sesiones de inmediato.
@@ -87,7 +145,7 @@ Las pruebas activas se ejecutaron solo contra un contenedor local con una base P
 - **Integridad de auditoría**: el sello no detecta registros eliminados por quien pueda desactivar el trigger, ni acredita el origen de un archivo exportado ([auditoria.md](auditoria.md)).
 - La imagen de producción incluye `pytest` y `httpx` (dependencias de prueba).
 
-### 4.3 Falsos positivos justificados
+#### 4.3 Falsos positivos justificados
 
 | Herramienta | Aviso | Motivo |
 |---|---|---|
@@ -97,7 +155,7 @@ Las pruebas activas se ejecutaron solo contra un contenedor local con una base P
 | bandit B105 | «Contraseña» `"access"` | Es el tipo de token, no una credencial |
 | bandit B608 | SQL por concatenación en la migración 0002 | El texto concatenado es una constante del código, sin entrada de usuario |
 
-## 5. Despliegue en Render
+### 5. Despliegue en Render
 
 1. El arranque ejecuta `alembic upgrade head`, que aplica la migración **0005** (aditiva): columnas de auditoría, tabla `terms_acceptances`, trigger de solo inserción, RLS y desactivación de cuentas demo. No borra datos ni recarga los datos sintéticos.
 2. Retirar `DEMO_ACCESS_ENABLED` de las variables de Render si existe (ya no se usa).

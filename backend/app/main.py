@@ -10,6 +10,7 @@ from app.api.llm import llm_api
 from app.api.ml import ml_api
 from app.api.agents import agents_api
 from app.api.audit import audit_api
+from app.api.audit_center import audit_center_api
 from app.api.legal import legal_api
 from app import __version__
 from app.core.config import settings
@@ -22,6 +23,7 @@ from app.automation.worker import AutomationWorker
 from app.ml.training import ensure_ready
 from app.agents.runner import ensure_states
 from app.agents.scheduler import scheduler_loop
+from app.auditing import engine as audit_engine, runtime as audit_runtime
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 log = logging.getLogger("fixit.ml")
@@ -59,6 +61,7 @@ async def lifespan(app: FastAPI):
         db.close()
     scheduler_stop = asyncio.Event()
     scheduler = asyncio.create_task(scheduler_loop(scheduler_stop), name="fixit-agent-scheduler")
+    audit_runtime.STATE["scheduler"] = scheduler
 
     # The automation worker relies on PostgreSQL features (SKIP LOCKED, automation_events triggers).
     worker = task = None
@@ -70,10 +73,14 @@ async def lifespan(app: FastAPI):
         )
 
     app.state.automation_worker = worker
+    audit_runtime.STATE["automation_worker"] = task
+    # Audit center: sync the control catalog, close runs interrupted by a restart and resume pending ones (never blocks startup).
+    await asyncio.to_thread(audit_engine.startup)
 
     try:
         yield
     finally:
+        audit_engine.shutdown()
         scheduler_stop.set()
         await scheduler
         if worker and task:
@@ -95,6 +102,7 @@ app.include_router(ml_api)
 app.include_router(llm_api)
 app.include_router(agents_api)
 app.include_router(audit_api)
+app.include_router(audit_center_api)
 app.include_router(legal_api)
 app.mount("/static",StaticFiles(directory=STATIC_DIR),name="static")
 

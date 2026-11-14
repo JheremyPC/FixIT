@@ -1,5 +1,6 @@
 "use strict";
 /* FixIT web client — audit trail: filters, paging, record detail and CSV/JSON export (ADMIN and JEFE_TI).
+   Rendered inside the "Registros y trazabilidad" section of the audit center (audit_center.js).
    The server enforces the permissions; this page only reflects them. Dates are picked in local time and sent
    as UTC; exported files are always in UTC. */
 
@@ -27,8 +28,8 @@ function auditQuery(extra = {}) {
   return params;
 }
 
-Pages.audit = async (root) => {
-  setTitle("Auditoría", "Registro de actividad para supervisión y auditorías externas");
+/* Activity trail viewer; ``root`` is a container inside the audit center page. */
+async function renderAuditTrail(root) {
   auditFacets = await api("/audit/facets");
   const f = auditFacets;
   const select = (name, label, values, all = "Todos") => `<label>${label}<select name="${name}"><option value="">${all}</option>${values.map(([v, l]) => option(v, l, auditFilters[name] === v)).join("")}</select></label>`;
@@ -57,7 +58,7 @@ Pages.audit = async (root) => {
     loadAuditResults();
   };
   await loadAuditResults();
-};
+}
 
 async function loadAuditResults() {
   const box = $("#audit-results");
